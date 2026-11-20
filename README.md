@@ -4,8 +4,10 @@ Composant externe ESPHome (`external_components`) pour le capteur ToF multizone
 **ST VL53L5CX** sur **ESP32-C3** (framework **ESP-IDF**), destiné au **comptage
 de passages bidirectionnel** par suivi de blobs.
 
-> 🚧 **Statut : en conception.** Ce document décrit la spécification cible.
-> Aucune ligne de code n'est encore écrite.
+> 🚧 **Statut : étape 1 en cours de test.** Le driver, la carte de fond
+> adaptative, la hauteur d'installation, le mouvement, la veille et le debug
+> sont implémentés. Les blobs, le tracking et les compteurs arrivent aux
+> étapes suivantes. Les fonctions non encore disponibles sont signalées par ⏳.
 
 ---
 
@@ -85,11 +87,12 @@ Cas particuliers :
 
 ### 2. Traitement de chaque image (8×8)
 
-1. **Hauteur par zone** : `h = (distance_fond − distance) × cos(angle_zone)`,
-   c'est-à-dire la hauteur de l'objet au-dessus du sol (ou du meuble). Seules
-   les mesures dont le statut du capteur est valide sont prises en compte.
-2. **Masque actif** : `h_min ≤ h ≤ h_max`, avec une marge pour absorber le bruit
-   de mesure.
+1. **Hauteur par zone** : `h = hauteur_installation − distance × cos(angle_zone)`,
+   c'est-à-dire la hauteur de l'objet au-dessus du sol. Seules les mesures
+   dont le statut du capteur est valide (5 ou 9) sont prises en compte.
+2. **Masque actif** : la zone mesure au moins `background_margin` (10 cm par
+   défaut) de moins que la carte de fond, **et** `h_min ≤ h ≤ h_max`. Le
+   premier test écarte les murs et les meubles, le second filtre par taille.
 3. **Mouvement** : au moins N zones actives, avec un anti-rebond pour la
    retombée.
 4. **Blobs** : on regroupe les zones actives voisines. Le centroïde de chaque
@@ -160,7 +163,9 @@ démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 | `switch` | Debug matrice | Active l'affichage 8×8 dans les logs |
 | action | `subtract` | Soustrait X à un compteur |
 
-## Exemple de configuration (prévisionnel, syntaxe susceptible d'évoluer)
+## Configuration
+
+Les entités marquées ⏳ ne sont pas encore disponibles.
 
 ```yaml
 esp32:
@@ -175,28 +180,34 @@ external_components:
 i2c:
   sda: GPIO4
   scl: GPIO5
-  frequency: 1MHz
+  frequency: 400kHz
 
 blobsense:
   id: porte_salon
-  int_pin: GPIO6            # recommandé : broche INT (data ready)
+  int_pin:                  # recommandé : broche INT (image prête)
+    number: GPIO6
+    mode:
+      input: true
+      pullup: true          # INT est en drain ouvert
   lpn_pin: GPIO7            # recommandé : broche LPn (redémarrage du capteur)
-  axis: y                   # axe de passage dans la matrice
-  invert: false             # inverse les côtés A et B
-  band_width: 2             # largeur de la bande centrale, en zones
-  background_window: 10min  # fenêtre de la carte de fond adaptative
+  # Options et valeurs par défaut :
+  # ranging_frequency: 15     # Hz (1 à 15)
+  # integration_time: 10ms    # temps d'émission du laser par image (mode autonomous)
+  # background_window: 10min  # fenêtre de la carte de fond adaptative
+  # startup_window: 10s       # fenêtre courte au démarrage et à la recalibration
+  # background_margin: 10cm   # écart minimal avec le fond pour qu'une zone soit active
+  # min_active_zones: 2       # zones actives nécessaires pour signaler un mouvement
+  # motion_off_delay: 2s      # délai avant de repasser le mouvement à off
+  # axis: y                   # axe de passage dans la matrice (x ou y)
+  # invert: false             # inverse les côtés A et B
+  # band_width: 2             # largeur de la bande centrale, en zones
 
 sensor:
   - platform: blobsense
     blobsense_id: porte_salon
     installation_height:
       name: "Hauteur d'installation"
-    people_count:
-      name: "Personnes présentes"
-    counter_a:
-      name: "Compteur salon"
-    counter_b:
-      name: "Compteur couloir"
+    # ⏳ people_count, counter_a, counter_b
 
 binary_sensor:
   - platform: blobsense
@@ -209,43 +220,42 @@ number:
     blobsense_id: porte_salon
     min_height:
       name: "Hauteur min"
-      initial_value: 100
+      initial_value: 100    # cm, valeur conservée après redémarrage
     max_height:
       name: "Hauteur max"
       initial_value: 210
-
-button:
-  - platform: blobsense
-    blobsense_id: porte_salon
-    reset_a:
-      name: "RAZ compteur salon"
-    reset_b:
-      name: "RAZ compteur couloir"
-    recalibrate:
-      name: "Recalibrer maintenant"
-    calibrate_cover:
-      name: "Calibrer le verre de protection"
 
 switch:
   - platform: blobsense
     blobsense_id: porte_salon
     active:
-      name: "Lecture active"
+      name: "Lecture active"  # restore_mode: ALWAYS_ON par défaut (pas d'écriture flash)
     debug_matrix:
       name: "Debug matrice"
 
-api:
-  actions:
-    - action: subtract
-      variables:
-        counter: string   # "a" ou "b"
-        value: int
-      then:
-        - blobsense.subtract:
-            id: porte_salon
-            counter: !lambda 'return counter;'
-            value: !lambda 'return value;'
+button:
+  - platform: blobsense
+    blobsense_id: porte_salon
+    recalibrate:
+      name: "Recalibrer maintenant"
+    # ⏳ reset_a, reset_b, calibrate_cover
+
+# ⏳ Action blobsense.subtract (étape 3), par exemple via l'API :
+# api:
+#   actions:
+#     - action: subtract
+#       variables:
+#         counter: string   # "a" ou "b"
+#         value: int
+#       then:
+#         - blobsense.subtract:
+#             id: porte_salon
+#             counter: !lambda 'return counter;'
+#             value: !lambda 'return value;'
 ```
+
+Un exemple complet est disponible dans
+[`examples/blobsense-esp32c3.yaml`](examples/blobsense-esp32c3.yaml).
 
 ## Intégration Home Assistant
 
@@ -280,7 +290,7 @@ Des exemples d'automatisations seront fournis dans `examples/`.
 | VL53L5CX (module générique) | Vérifier la tension d'alimentation (régulateur 3,3 V ou non) et la présence des pull-up I2C |
 | INT | Recommandée : le capteur signale lui-même qu'une image est prête, sans interrogation en boucle de l'I2C |
 | LPn | Recommandée : permet de redémarrer le capteur matériellement s'il se bloque |
-| I2C | Jusqu'à 1 MHz : le firmware du capteur (~84 Ko) est envoyé à chaque démarrage, ce qui prend 1 à 2 s |
+| I2C | 400 kHz conseillé (l'ESP32-C3 monte à 800 kHz au maximum). Le firmware du capteur (~84 Ko) est envoyé à chaque démarrage, ce qui prend environ 2 s |
 
 **Montage** : capteur à l'horizontale, centré dans le passage, en haut de
 l'encadrement, orienté vers le sol. Hauteur d'installation prévue : **1,90 m à
@@ -361,22 +371,38 @@ n'est envoyé dans la base de données de Home Assistant.
 
 ## Feuille de route
 
-1. **Driver et carte de fond** : intégration du driver ST ULD, lecture 8×8,
-   carte de fond adaptative, hauteur d'installation, mouvement, debug de la
-   matrice.
-2. **Blobs et tracking** : détection, pistes avec nombre de personnes,
+1. 🧪 **Driver et carte de fond** (implémenté, à tester sur le matériel) :
+   driver ST ULD, lecture 8×8 en mode autonomous, carte de fond adaptative,
+   hauteur d'installation, mouvement, hauteurs min/max, switch Lecture active,
+   recalibration, debug de la matrice.
+2. ⏳ **Blobs et tracking** : détection, pistes avec nombre de personnes,
    fusion et séparation, estimation des personnes présentes.
-3. **Comptage** : bande centrale, compteurs, boutons, réglages min/max, action
-   `subtract`.
-4. **Consommation** : mode autonomous, temps d'intégration, switch Lecture
-   active, mesures de consommation.
-5. **Protection** : calibration du crosstalk et sauvegarde en flash.
-6. **Réglages sur site et documentation** : exemples Home Assistant.
+3. ⏳ **Comptage** : bande centrale, compteurs, boutons de remise à zéro,
+   action `subtract`.
+4. ⏳ **Consommation** : mesures réelles et réglage du temps d'intégration.
+5. ⏳ **Protection** : calibration du crosstalk et sauvegarde en flash.
+6. ⏳ **Réglages sur site et documentation** : exemples Home Assistant.
 
-## Points ouverts
+## Premiers essais (étape 1)
 
-- Licence du driver ST ULD pour sa redistribution dans ce dépôt.
+1. Flasher l'exemple, capteur installé et **passage vide**.
+2. Après ~10 s, la carte de fond initiale est apprise et la hauteur
+   d'installation est publiée.
+3. Activer **Debug matrice** et suivre les logs : la carte de fond est
+   affichée à chaque mise à jour, et la matrice deux fois par seconde.
+4. Passer sous le capteur : les zones actives affichent la hauteur mesurée
+   (en cm) et le mouvement passe à on.
+
+À me remonter : la hauteur mesurée comparée à la hauteur réelle, quelques
+captures de la matrice pendant un passage, et le comportement des zones qui
+voient les murs.
 
 ## Licence
 
 Voir [LICENSE](LICENSE).
+
+Le composant embarque le driver **ST VL53L5CX Ultra Lite Driver (ULD)**
+v1.3.0 (`vl53l5cx_api.c`, `vl53l5cx_api.h`, `vl53l5cx_buffers.h`), © 2020
+STMicroelectronics, distribué ici sous licence **BSD 3-clause**, l'une des
+deux licences proposées par ST dans l'en-tête de ces fichiers. Les fichiers
+sont repris sans modification.

@@ -1,0 +1,79 @@
+# Exemple BlobSense : ESP32-C3 + VL53L5CX, étape 1.
+# Câblage : SDA=GPIO4, SCL=GPIO5, INT=GPIO6, LPn=GPIO7, alimentation 3,3 V.
+
+esphome:
+  name: blobsense-porte-salon
+  friendly_name: Porte salon
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+# Transport libre : Wi-Fi + API ici, mais le composant n'en dépend pas.
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  power_save_mode: light
+
+api:
+
+ota:
+  - platform: esphome
+
+external_components:
+  - source: github://ev0000/BlobSense
+    components: [blobsense]
+
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  frequency: 400kHz
+
+blobsense:
+  id: porte_salon
+  int_pin:
+    number: GPIO6
+    mode:
+      input: true
+      pullup: true
+  lpn_pin: GPIO7
+
+sensor:
+  - platform: blobsense
+    blobsense_id: porte_salon
+    installation_height:
+      name: "Hauteur d'installation"
+
+binary_sensor:
+  - platform: blobsense
+    blobsense_id: porte_salon
+    motion:
+      name: "Mouvement"
+
+number:
+  - platform: blobsense
+    blobsense_id: porte_salon
+    min_height:
+      name: "Hauteur min"
+      initial_value: 100
+    max_height:
+      name: "Hauteur max"
+      initial_value: 210
+
+switch:
+  - platform: blobsense
+    blobsense_id: porte_salon
+    active:
+      name: "Lecture active"
+    debug_matrix:
+      name: "Debug matrice"
+
+button:
+  - platform: blobsense
+    blobsense_id: porte_salon
+    recalibrate:
+      name: "Recalibrer maintenant"
