@@ -127,7 +127,11 @@ void BlobSenseComponent::dump_config() {
   LOG_SENSOR("  ", "Hauteur d'installation", this->installation_height_sensor_);
   LOG_SENSOR("  ", "Personnes présentes", this->people_count_sensor_);
   LOG_SENSOR("  ", "Compteur A", this->counter_a_sensor_);
+  if (this->counter_a_sensor_ != nullptr)
+    ESP_LOGCONFIG(TAG, "    Seul accès de la pièce (mono_acces): %s", YESNO(this->mono_acces_a_));
   LOG_SENSOR("  ", "Compteur B", this->counter_b_sensor_);
+  if (this->counter_b_sensor_ != nullptr)
+    ESP_LOGCONFIG(TAG, "    Seul accès de la pièce (mono_acces): %s", YESNO(this->mono_acces_b_));
   LOG_BINARY_SENSOR("  ", "Mouvement", this->motion_binary_sensor_);
   for (const auto &ds : this->distance_sensors_) {
     LOG_SENSOR("  ", "Distance", ds.sensor);
@@ -558,17 +562,20 @@ void BlobSenseComponent::track_(uint64_t active) {
 // Compteurs
 // ---------------------------------------------------------------------------
 
-static int16_t clamp_counter(int32_t value) {
+// Borne un compteur à ±999, ou à [0, 999] si sa pièce n'a que cet accès : on
+// ne peut pas en sortir plus de personnes qu'il n'en est entré.
+static int16_t clamp_counter(int32_t value, bool mono_acces) {
+  const int32_t low = mono_acces ? 0 : -COUNTER_LIMIT;
   if (value > COUNTER_LIMIT)
     return COUNTER_LIMIT;
-  if (value < -COUNTER_LIMIT)
-    return -COUNTER_LIMIT;
+  if (value < low)
+    return static_cast<int16_t>(low);
   return static_cast<int16_t>(value);
 }
 
 void BlobSenseComponent::add_to_counters_(int32_t delta_a, int32_t delta_b) {
-  this->counter_a_ = clamp_counter(static_cast<int32_t>(this->counter_a_) + delta_a);
-  this->counter_b_ = clamp_counter(static_cast<int32_t>(this->counter_b_) + delta_b);
+  this->counter_a_ = clamp_counter(static_cast<int32_t>(this->counter_a_) + delta_a, this->mono_acces_a_);
+  this->counter_b_ = clamp_counter(static_cast<int32_t>(this->counter_b_) + delta_b, this->mono_acces_b_);
   this->publish_counters_();
 }
 
@@ -592,7 +599,7 @@ void BlobSenseComponent::reset_counter(bool b) {
 // contrairement à une remise à zéro.
 void BlobSenseComponent::subtract(bool b, int32_t value) {
   int16_t &counter = b ? this->counter_b_ : this->counter_a_;
-  counter = clamp_counter(static_cast<int32_t>(counter) - value);
+  counter = clamp_counter(static_cast<int32_t>(counter) - value, b ? this->mono_acces_b_ : this->mono_acces_a_);
   ESP_LOGI(TAG, "Compteur %c : %d soustrait, nouvelle valeur %d", b ? 'B' : 'A', (int) value, counter);
   this->publish_counters_();
 }

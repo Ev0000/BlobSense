@@ -16,6 +16,7 @@ CONF_INSTALLATION_HEIGHT = "installation_height"
 CONF_PEOPLE_COUNT = "people_count"
 CONF_COUNTER_A = "counter_a"
 CONF_COUNTER_B = "counter_b"
+CONF_MONO_ACCES = "mono_acces"
 CONF_ZONE = "zone"
 CONF_SMOOTHING = "smoothing"
 
@@ -35,16 +36,18 @@ CONFIG_SCHEMA = cv.Schema(
             state_class=STATE_CLASS_MEASUREMENT,
             icon="mdi:account-group",
         ),
+        # mono_acces : cette porte est le seul accès de la pièce de ce côté,
+        # son compteur ne peut donc pas descendre sous 0.
         cv.Optional(CONF_COUNTER_A): sensor.sensor_schema(
             accuracy_decimals=0,
             state_class=STATE_CLASS_MEASUREMENT,
             icon="mdi:counter",
-        ),
+        ).extend({cv.Optional(CONF_MONO_ACCES, default=False): cv.boolean}),
         cv.Optional(CONF_COUNTER_B): sensor.sensor_schema(
             accuracy_decimals=0,
             state_class=STATE_CLASS_MEASUREMENT,
             icon="mdi:counter",
-        ),
+        ).extend({cv.Optional(CONF_MONO_ACCES, default=False): cv.boolean}),
         # Distance brute d'une zone (par défaut la zone 27, au centre de la
         # matrice), moyennée sur update_interval. Pour les essais et la mesure
         # de distance simple. Plusieurs blocs « platform: blobsense » peuvent
@@ -80,9 +83,11 @@ async def to_code(config):
     if conf := config.get(CONF_COUNTER_A):
         sens = await sensor.new_sensor(conf)
         cg.add(hub.set_counter_a_sensor(sens))
+        cg.add(hub.set_mono_acces(False, conf[CONF_MONO_ACCES]))
     if conf := config.get(CONF_COUNTER_B):
         sens = await sensor.new_sensor(conf)
         cg.add(hub.set_counter_b_sensor(sens))
+        cg.add(hub.set_mono_acces(True, conf[CONF_MONO_ACCES]))
     if conf := config.get(CONF_DISTANCE):
         sens = await sensor.new_sensor(conf)
         cg.add(

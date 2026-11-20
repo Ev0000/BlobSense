@@ -160,6 +160,14 @@ confirmées d'au moins 2 zones.
 Chaque compteur représente la variation d'occupation de **sa** pièce, vue
 depuis cette porte. Ils évoluent en miroir et sont bornés à ±999.
 
+Option `mono_acces` (par compteur, `false` par défaut) : si cette porte est
+le **seul accès** de la pièce de ce côté, son compteur est directement
+l'occupation de la pièce et **ne descend jamais sous 0**. On ne peut pas en
+sortir plus de personnes qu'il n'en est entré : une sortie comptée alors que
+le compteur vaut 0 (entrée manquée) est ignorée pour ce compteur. Le
+compteur de l'autre côté évolue normalement. La borne s'applique aussi à
+l'action `subtract`.
+
 Les compteurs **ne sont pas sauvegardés en flash** et repartent à 0 au
 démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 
@@ -239,8 +247,11 @@ sensor:
       name: "Personnes présentes"
     counter_a:              # variation d'occupation du côté A (−999 … 999)
       name: "Compteur A"
+      # mono_acces: false     # true si cette porte est le seul accès de la pièce A :
+      #                       # le compteur ne descend alors jamais sous 0
     counter_b:              # variation d'occupation du côté B (−999 … 999)
       name: "Compteur B"
+      # mono_acces: false
 
 binary_sensor:
   - platform: blobsense

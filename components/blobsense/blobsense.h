@@ -73,6 +73,8 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void set_people_count_sensor(sensor::Sensor *s) { this->people_count_sensor_ = s; }
   void set_counter_a_sensor(sensor::Sensor *s) { this->counter_a_sensor_ = s; }
   void set_counter_b_sensor(sensor::Sensor *s) { this->counter_b_sensor_ = s; }
+  // Pièce dont cette porte est le seul accès : son compteur ne descend pas sous 0.
+  void set_mono_acces(bool b, bool mono) { (b ? this->mono_acces_b_ : this->mono_acces_a_) = mono; }
   void add_distance_sensor(sensor::Sensor *s, uint8_t zone, uint32_t interval_ms, uint32_t smoothing_ms) {
     DistanceSensor ds{};
     ds.sensor = s;
@@ -169,6 +171,8 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   int16_t people_published_{-1};
   int16_t counter_a_{0};
   int16_t counter_b_{0};
+  bool mono_acces_a_{false};
+  bool mono_acces_b_{false};
   uint32_t last_frame_ms_{0};
 
   // Carte de fond adaptative
