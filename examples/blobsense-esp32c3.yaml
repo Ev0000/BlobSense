@@ -48,6 +48,8 @@ sensor:
     blobsense_id: porte_salon
     installation_height:
       name: "Hauteur d'installation"
+    people_count:
+      name: "Personnes présentes"
 
 binary_sensor:
   - platform: blobsense

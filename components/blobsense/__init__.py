@@ -25,6 +25,7 @@ CONF_MOTION_OFF_DELAY = "motion_off_delay"
 CONF_AXIS = "axis"
 CONF_INVERT = "invert"
 CONF_BAND_WIDTH = "band_width"
+CONF_PEAK_PROMINENCE = "peak_prominence"
 
 blobsense_ns = cg.esphome_ns.namespace("blobsense")
 BlobSenseComponent = blobsense_ns.class_(
@@ -78,6 +79,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_AXIS, default="y"): cv.one_of("x", "y", lower=True),
             cv.Optional(CONF_INVERT, default=False): cv.boolean,
             cv.Optional(CONF_BAND_WIDTH, default=2): cv.int_range(min=1, max=6),
+            cv.Optional(CONF_PEAK_PROMINENCE, default="15cm"): cv.All(
+                cv.distance, cv.Range(min=0.02, max=1.0)
+            ),
         }
     )
     .extend(cv.COMPONENT_SCHEMA)
@@ -111,3 +115,4 @@ async def to_code(config):
     cg.add(var.set_axis_x(config[CONF_AXIS] == "x"))
     cg.add(var.set_invert(config[CONF_INVERT]))
     cg.add(var.set_band_width(config[CONF_BAND_WIDTH]))
+    cg.add(var.set_peak_prominence(int(round(config[CONF_PEAK_PROMINENCE] * 1000))))

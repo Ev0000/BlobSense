@@ -4,10 +4,12 @@ Composant externe ESPHome (`external_components`) pour le capteur ToF multizone
 **ST VL53L5CX** sur **ESP32-C3** (framework **ESP-IDF**), destiné au **comptage
 de passages bidirectionnel** par suivi de blobs.
 
-> 🚧 **Statut : étape 1 en cours de test.** Le driver, la carte de fond
-> adaptative, la hauteur d'installation, le mouvement, la veille et le debug
-> sont implémentés. Les blobs, le tracking et les compteurs arrivent aux
-> étapes suivantes. Les fonctions non encore disponibles sont signalées par ⏳.
+> 🚧 **Statut : étape 2 en cours de test.** Le driver, la carte de fond
+> adaptative, la hauteur d'installation, le mouvement, la veille, le debug,
+> la détection et le suivi des blobs, l'estimation des personnes présentes et
+> la détection des passages (dans les logs) sont implémentés. Les compteurs
+> arrivent à l'étape 3. Les fonctions non encore disponibles sont signalées
+> par ⏳.
 
 ---
 
@@ -96,9 +98,13 @@ Cas particuliers :
    premier test écarte les murs et les meubles, le second filtre par taille.
 3. **Mouvement** : au moins N zones actives, avec un anti-rebond pour la
    retombée.
-4. **Blobs** : on regroupe les zones actives voisines. Le centroïde de chaque
-   blob est pondéré par la hauteur.
-5. **Tracking** : chaque blob est associé aux pistes de l'image précédente
+4. **Blobs** : les zones actives sont traitées de la plus haute à la plus
+   basse et forment des blobs autour des sommets (têtes). Quand deux blobs se
+   touchent, ils restent séparés si le creux entre leurs sommets dépasse
+   `peak_prominence` (15 cm par défaut) : deux têtes distinctes. Sinon ils
+   sont fusionnés (une tête et ses épaules). Les blobs d'une seule zone sont
+   ignorés (bruit). Le centre de chaque blob est pondéré par la hauteur.
+5. **Suivi** : chaque blob est associé aux pistes de l'image précédente
    (voir le point 4).
 
 ### 3. Comptage par bande centrale
@@ -112,7 +118,7 @@ Cas particuliers :
   d'origine. Le côté par lequel il en sort devient son origine, sans comptage.
 - Un passage de A vers B fait `A −= 1` et `B += 1`, et inversement.
 
-### 4. Blobs indistincts (fusion et séparation)
+### 4. Suivi des pistes et blobs indistincts
 
 On ne cherche pas à savoir **qui** est qui, seulement **combien** de personnes
 sont parties de chaque côté et sont arrivées de chaque côté. Comme les
@@ -120,22 +126,27 @@ compteurs sont en miroir, le bilan ne dépend que de ces nombres :
 
 > **Flux net A→B = (sorties côté B) − (origines côté B)**
 
-Chaque piste porte un **nombre de personnes** et la **liste de leurs côtés
-d'origine** :
+Chaque piste porte un **nombre de personnes** et, pour chacune, son **dernier
+côté connu** (A, B, ou inconnu si elle est apparue dans la bande). À chaque
+image :
 
-| Événement | Traitement |
+| Étape | Traitement |
 |---|---|
-| Fusion de deux blobs | On additionne leurs nombres de personnes et leurs listes d'origines |
-| Séparation d'un blob | Le nombre de personnes est réparti entre les morceaux, dans la limite du total |
-| Sortie de la bande ou du champ | On fait le bilan des origines et des sorties, et on met à jour les compteurs |
+| Association | Chaque piste suit le blob qui la chevauche le plus, ou à défaut le plus proche (2,5 zones au plus) |
+| Confirmation | Une nouvelle piste n'est confirmée qu'après 3 images consécutives. Avant, elle ne compte pas et disparaît dès qu'elle n'est plus vue : c'est ce qui élimine le bruit |
+| Fusion | Une piste sans blob, dont la zone est reprise par un blob déjà suivi, lui confie ses personnes |
+| Séparation | Un blob nouveau qui se détache d'une piste emporte une personne si cette piste en porte plusieurs, sinon aucune (bras, objet, fragment) |
+| Promotion | Un fragment sans personne qui reste séparé et fait au moins 3 zones pendant 5 images devient une personne. Son côté d'origine est celui où il s'est détaché. C'est le cas de deux personnes entrées côte à côte, puis qui s'écartent |
+| Sortie du champ | Une piste dont la position prévue sort de la matrice disparaît, sans être absorbée par une autre |
+| Passage | Quand une piste est hors de la bande, ses personnes venues de l'autre côté ont traversé : un passage est compté pour chacune |
 
 Exemple : deux personnes, l'une venue de A et l'autre de B, forment un gros
 blob qui se sépare, puis chacune repart d'un côté. Qu'elles se soient croisées
 ou qu'elles soient revenues chacune chez elle, le bilan est nul. Le résultat
 est juste dans les deux cas.
 
-Le capteur **Personnes présentes** est la somme des nombres de personnes de
-toutes les pistes actives.
+Le capteur **Personnes présentes** est la somme des personnes des pistes
+confirmées d'au moins 2 zones.
 
 ### 5. Compteurs
 
@@ -204,6 +215,7 @@ blobsense:
   # axis: y                   # axe de passage dans la matrice (x ou y)
   # invert: false             # inverse les côtés A et B
   # band_width: 2             # largeur de la bande centrale, en zones
+  # peak_prominence: 15cm     # creux minimal entre deux têtes pour les séparer
 
 sensor:
   - platform: blobsense
@@ -214,7 +226,9 @@ sensor:
       name: "Distance centre"
       zone: 27              # 0 à 63 (ligne × 8 + colonne), 27 par défaut
       update_interval: 1s   # moyenne des mesures valides sur cet intervalle
-    # ⏳ people_count, counter_a, counter_b
+    people_count:
+      name: "Personnes présentes"
+    # ⏳ counter_a, counter_b
 
 binary_sensor:
   - platform: blobsense
@@ -385,29 +399,46 @@ développement et ajoutés ici.
 
 - Deux personnes qui entrent **déjà collées** et ne se séparent jamais sont
   comptées comme une seule.
-- Les croisements simultanés dans les deux sens fonctionnent si les personnes
-  se séparent avant de quitter le champ.
+- Deux personnes qui se croisent en sens inverse en se **frôlant**, au moment
+  où l'une sort du champ, peuvent fausser le bilan.
 - Le plein soleil et les surfaces très sombres réduisent la portée.
 - Les animaux plus grands que la hauteur min seront comptés : c'est à régler
   par l'utilisateur.
 
+## Tests du suivi sur PC
+
+Le suivi (`tracker.h` / `tracker.cpp`) ne dépend pas d'ESPHome. Il est testé
+sur PC avec des personnes simulées :
+
+```bash
+./tests/run_tests.sh          # scénarios unitaires (passages, croisements, fusions, bruit…)
+./tests/run_tests.sh --fuzz   # robustesse : des milliers de scénarios aléatoires
+```
+
+Résultats actuels du test de robustesse (1 à 3 personnes, vitesses, couloirs
+et tailles aléatoires) : moins de 1 % de bilans faux, avec jusqu'à 2 % de
+zones manquantes ou parasites. Ces chiffres valent pour la simulation et
+seront à confirmer en conditions réelles.
+
 ## Debug : visualisation de la matrice
 
 Quand le switch « Debug matrice » est actif, la matrice est affichée en ASCII
-dans les logs ESPHome, quelques fois par seconde : hauteurs, blobs et bande
-centrale. Le coût en calcul est négligeable (formatage de 64 valeurs) et rien
+dans les logs ESPHome deux fois par seconde : hauteurs des zones actives,
+bande centrale entre [ ], puis une ligne par piste (personnes, côtés
+d'origine, position, côté actuel). Les passages sont toujours écrits dans les
+logs, debug actif ou non : `Passage A → B (1 personne)`. Le coût en calcul est négligeable (formatage de 64 valeurs) et rien
 n'est envoyé dans la base de données de Home Assistant.
 
 ## Feuille de route
 
-1. 🧪 **Driver et carte de fond** (implémenté, à tester sur le matériel) :
-   driver ST ULD, lecture 8×8 en mode autonomous, carte de fond adaptative,
-   hauteur d'installation, mouvement, hauteurs min/max, switch Lecture active,
-   recalibration, debug de la matrice.
-2. ⏳ **Blobs et tracking** : détection, pistes avec nombre de personnes,
-   fusion et séparation, estimation des personnes présentes.
-3. ⏳ **Comptage** : bande centrale, compteurs, boutons de remise à zéro,
-   action `subtract`.
+1. ✅ **Driver et carte de fond** : driver ST ULD, lecture 8×8 en mode
+   autonomous, carte de fond adaptative, hauteur d'installation, mouvement,
+   hauteurs min/max, switch Lecture active, recalibration, debug de la
+   matrice, capteur de distance brute.
+2. 🧪 **Blobs et suivi** (implémenté et testé en simulation, à tester sur le
+   matériel) : détection par sommets, pistes avec nombre de personnes, fusion
+   et séparation, personnes présentes, passages dans les logs.
+3. ⏳ **Comptage** : compteurs, boutons de remise à zéro, action `subtract`.
 4. ⏳ **Consommation** : mesures réelles et réglage du temps d'intégration.
 5. ⏳ **Protection** : calibration du crosstalk et sauvegarde en flash.
 6. ⏳ **Réglages sur site et documentation** : exemples Home Assistant.
@@ -439,7 +470,7 @@ valeur après quelques secondes, puis recommencer avec la protection. La zone
 centrale ne voit qu'un cône d'environ 5,6° : à 1 m, elle couvre un carré
 d'environ 10 cm de côté, la cible doit donc bien être dans l'axe.
 
-## Premiers essais en place (étape 1)
+## Premiers essais en place
 
 1. Flasher l'exemple, capteur installé et **passage vide**.
 2. Après ~10 s, la carte de fond initiale est apprise et la hauteur
@@ -447,11 +478,14 @@ d'environ 10 cm de côté, la cible doit donc bien être dans l'axe.
 3. Activer **Debug matrice** et suivre les logs : la carte de fond est
    affichée à chaque mise à jour, et la matrice deux fois par seconde.
 4. Passer sous le capteur : les zones actives affichent la hauteur mesurée
-   (en cm) et le mouvement passe à on.
+   (en cm), le mouvement passe à on, une piste apparaît, et un message
+   `Passage A → B` ou `Passage B → A` est écrit à la traversée.
+5. Vérifier `axis` (voir « Orientation du capteur ») puis le sens : si les
+   passages sont inversés, mettre `invert: true`.
 
-À me remonter : la hauteur mesurée comparée à la hauteur réelle, quelques
-captures de la matrice pendant un passage, et le comportement des zones qui
-voient les murs.
+À me remonter : des passages seuls, à deux côte à côte, à deux en sens
+inverse, un demi-tour sous le capteur, avec les messages obtenus et si
+possible quelques matrices de debug.
 
 ## Licence
 

@@ -14,6 +14,7 @@ from esphome.const import (
 from . import CONF_BLOBSENSE_ID, BlobSenseComponent
 
 CONF_INSTALLATION_HEIGHT = "installation_height"
+CONF_PEOPLE_COUNT = "people_count"
 CONF_ZONE = "zone"
 
 CONFIG_SCHEMA = cv.Schema(
@@ -26,6 +27,11 @@ CONFIG_SCHEMA = cv.Schema(
             state_class=STATE_CLASS_MEASUREMENT,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             icon="mdi:arrow-expand-vertical",
+        ),
+        cv.Optional(CONF_PEOPLE_COUNT): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            icon="mdi:account-group",
         ),
         # Distance brute d'une zone (par défaut la zone 27, au centre de la
         # matrice), moyennée sur update_interval. Pour les essais et la mesure
@@ -54,6 +60,9 @@ async def to_code(config):
     if conf := config.get(CONF_INSTALLATION_HEIGHT):
         sens = await sensor.new_sensor(conf)
         cg.add(hub.set_installation_height_sensor(sens))
+    if conf := config.get(CONF_PEOPLE_COUNT):
+        sens = await sensor.new_sensor(conf)
+        cg.add(hub.set_people_count_sensor(sens))
     if conf := config.get(CONF_DISTANCE):
         sens = await sensor.new_sensor(conf)
         cg.add(

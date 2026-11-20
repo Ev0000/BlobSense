@@ -62,6 +62,14 @@ void BlobSenseComponent::setup() {
     this->int_pin_->attach_interrupt(&BlobSenseComponent::gpio_intr, this, gpio::INTERRUPT_FALLING_EDGE);
   }
 
+  TrackerConfig tc;
+  tc.axis_x = this->axis_x_;
+  tc.invert = this->invert_;
+  tc.band_width = this->band_width_;
+  tc.prominence_mm = this->peak_prominence_;
+  this->tracker_.configure(tc);
+  this->reset_tracking_();
+
   this->dev_.platform.handle = this;
   this->dev_.platform.address = VL53L5CX_DEFAULT_I2C_ADDRESS;
 
@@ -94,16 +102,18 @@ void BlobSenseComponent::dump_config() {
                 "  Fréquence: %u Hz, intégration: %u ms (mode autonomous)\n"
                 "  Fenêtre de fond: %" PRIu32 " s, fenêtre de démarrage: %" PRIu32 " s, marge: %u mm\n"
                 "  Zones actives min: %u, retombée du mouvement: %" PRIu32 " ms\n"
-                "  Axe: %s, inversé: %s, largeur de bande: %u",
+                "  Axe: %s, inversé: %s, largeur de bande: %u, creux entre sommets: %u mm",
                 this->ranging_frequency_, this->integration_time_, this->background_window_ / 1000,
                 this->startup_window_ / 1000, this->background_margin_, this->min_active_zones_,
-                this->motion_off_delay_, this->axis_x_ ? "x" : "y", YESNO(this->invert_), this->band_width_);
+                this->motion_off_delay_, this->axis_x_ ? "x" : "y", YESNO(this->invert_), this->band_width_,
+                this->peak_prominence_);
   if (!this->sensor_ok_) {
     ESP_LOGE(TAG, "  Capteur non initialisé : %s", this->failure_reason_);
     ESP_LOGE(TAG, "  Vérifier : alimentation, SDA/SCL, adresse 0x29, LPn à l'état haut (3,3 V),\n"
                   "  I2C_RST à la masse (GND) et PWREN à l'état haut si le module a ces broches");
   }
   LOG_SENSOR("  ", "Hauteur d'installation", this->installation_height_sensor_);
+  LOG_SENSOR("  ", "Personnes présentes", this->people_count_sensor_);
   LOG_BINARY_SENSOR("  ", "Mouvement", this->motion_binary_sensor_);
   for (const auto &ds : this->distance_sensors_) {
     LOG_SENSOR("  ", "Distance", ds.sensor);
@@ -260,6 +270,7 @@ void BlobSenseComponent::set_active(bool active) {
     this->ranging_ = false;
     this->active_mask_ = 0;
     this->set_motion_(false);
+    this->reset_tracking_();
     for (auto &ds : this->distance_sensors_) {
       ds.sum = 0;
       ds.count = 0;
@@ -418,6 +429,7 @@ void BlobSenseComponent::detect_(uint32_t now) {
     // Hauteur de l'objet au-dessus du sol.
     const float h = this->installation_height_mm_ - d * this->cos_zone_[z];
     this->height_cm_[z] = static_cast<int16_t>(lroundf(h / 10.0f));
+    this->height_mm_[z] = static_cast<int16_t>(lroundf(h));
 
     if (bg - d < this->background_margin_)
       continue;  // rien de plus proche que le fond
@@ -433,6 +445,39 @@ void BlobSenseComponent::detect_(uint32_t now) {
     this->set_motion_(true);
   } else if (this->motion_ && now - this->last_active_ms_ >= this->motion_off_delay_) {
     this->set_motion_(false);
+  }
+
+  if (this->background_valid_ && have_height) {
+    this->track_(this->active_mask_);
+  } else {
+    this->reset_tracking_();
+  }
+}
+
+void BlobSenseComponent::track_(uint64_t active) {
+  this->tracker_.update(active, this->height_mm_);
+
+  const uint8_t ab = this->tracker_.crossings_ab();
+  const uint8_t ba = this->tracker_.crossings_ba();
+  if (ab > 0)
+    ESP_LOGI(TAG, "Passage A → B (%u personne%s)", ab, ab > 1 ? "s" : "");
+  if (ba > 0)
+    ESP_LOGI(TAG, "Passage B → A (%u personne%s)", ba, ba > 1 ? "s" : "");
+
+  const int16_t people = this->tracker_.people_count();
+  if (people != this->people_published_) {
+    this->people_published_ = people;
+    if (this->people_count_sensor_ != nullptr)
+      this->people_count_sensor_->publish_state(people);
+  }
+}
+
+void BlobSenseComponent::reset_tracking_() {
+  this->tracker_.reset();
+  if (this->people_published_ != 0) {
+    this->people_published_ = 0;
+    if (this->people_count_sensor_ != nullptr)
+      this->people_count_sensor_->publish_state(0);
   }
 }
 
@@ -495,6 +540,13 @@ void BlobSenseComponent::log_matrix_() {
       pos += snprintf(line + pos, sizeof(line) - pos, "%c%s%c", band ? '[' : ' ', cell, band ? ']' : ' ');
     }
     ESP_LOGI(TAG, "  %u |%s|", row, line);
+  }
+  for (uint8_t i = 0; i < this->tracker_.track_count(); i++) {
+    const Track &t = this->tracker_.track(i);
+    const char *side = t.side == Side::A ? "A" : (t.side == Side::B ? "B" : "bande");
+    ESP_LOGI(TAG, "  Piste #%u : %u pers. (origine A:%u B:%u ?:%u), u=%.1f (0=A, 7=B) v=%.1f, côté %s%s%s", t.id,
+             t.persons, t.from_a, t.from_b, t.from_none, t.u, t.v, side, t.confirmed ? "" : ", à confirmer",
+             t.missed ? ", perdue" : "");
   }
 }
 

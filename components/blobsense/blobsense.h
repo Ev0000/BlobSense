@@ -14,6 +14,8 @@ extern "C" {
 #include "vl53l5cx_api.h"
 }
 
+#include "tracker.h"
+
 namespace esphome {
 namespace blobsense {
 
@@ -52,10 +54,12 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void set_axis_x(bool axis_x) { this->axis_x_ = axis_x; }
   void set_invert(bool invert) { this->invert_ = invert; }
   void set_band_width(uint8_t width) { this->band_width_ = width; }
+  void set_peak_prominence(uint16_t mm) { this->peak_prominence_ = mm; }
 
   // --- Entités ---
   void set_installation_height_sensor(sensor::Sensor *s) { this->installation_height_sensor_ = s; }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *s) { this->motion_binary_sensor_ = s; }
+  void set_people_count_sensor(sensor::Sensor *s) { this->people_count_sensor_ = s; }
   void add_distance_sensor(sensor::Sensor *s, uint8_t zone, uint32_t interval_ms) {
     this->distance_sensors_.push_back(DistanceSensor{s, zone, interval_ms});
   }
@@ -82,6 +86,8 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void update_installation_height_();
   void detect_(uint32_t now);
   void set_motion_(bool motion);
+  void track_(uint64_t active);
+  void reset_tracking_();
   void update_distance_sensors_(uint32_t now);
   bool in_band_(uint8_t row, uint8_t col) const;
   void log_matrix_();
@@ -114,6 +120,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   bool axis_x_{false};
   bool invert_{false};
   uint8_t band_width_{2};
+  uint16_t peak_prominence_{150};
   float min_height_mm_{1000.0f};
   float max_height_mm_{2100.0f};
   bool active_{true};
@@ -127,6 +134,11 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   uint64_t valid_mask_{0};
   uint64_t active_mask_{0};
   int16_t height_cm_[ZONES]{};
+  int16_t height_mm_[ZONES]{};
+
+  // Suivi des blobs et comptage
+  BlobTracker tracker_;
+  int16_t people_published_{-1};
   uint32_t last_frame_ms_{0};
 
   // Carte de fond adaptative
@@ -148,6 +160,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   uint32_t last_debug_ms_{0};
 
   sensor::Sensor *installation_height_sensor_{nullptr};
+  sensor::Sensor *people_count_sensor_{nullptr};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
   std::vector<DistanceSensor> distance_sensors_;
 };
