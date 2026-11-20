@@ -26,6 +26,8 @@ static constexpr uint32_t FRAME_GAP_MS = 1000;
 static constexpr uint8_t MAX_ERRORS = 10;
 // Taille des transferts I2C (le bus ESP-IDF d'ESPHome a un timeout de 100 ms par transaction).
 static constexpr uint32_t I2C_CHUNK = 256;
+// Délai entre deux tentatives d'initialisation.
+static constexpr uint32_t INIT_RETRY_MS = 10000;
 // Période d'affichage de la matrice de debug.
 static constexpr uint32_t DEBUG_PERIOD_MS = 500;
 
@@ -59,11 +61,21 @@ void BlobSenseComponent::setup() {
   this->dev_.platform.handle = this;
   this->dev_.platform.address = VL53L5CX_DEFAULT_I2C_ADDRESS;
 
-  if (!this->init_sensor_()) {
-    this->mark_failed();
-    return;
-  }
   this->set_motion_(false);
+  if (!this->init_sensor_())
+    this->schedule_init_retry_();
+}
+
+// Le composant n'est jamais marqué FAILED : on retente l'initialisation
+// régulièrement, ce qui permet de voir la cause dans les logs à tout moment et
+// de récupérer un capteur branché ou alimenté après l'ESP.
+void BlobSenseComponent::schedule_init_retry_() {
+  this->status_set_error();
+  ESP_LOGW(TAG, "Nouvelle tentative d'initialisation dans %" PRIu32 " s", INIT_RETRY_MS / 1000);
+  this->set_timeout("init", INIT_RETRY_MS, [this]() {
+    if (!this->init_sensor_())
+      this->schedule_init_retry_();
+  });
 }
 
 void IRAM_ATTR BlobSenseComponent::gpio_intr(BlobSenseComponent *arg) { arg->data_ready_ = true; }
@@ -81,8 +93,10 @@ void BlobSenseComponent::dump_config() {
                 this->ranging_frequency_, this->integration_time_, this->background_window_ / 1000,
                 this->startup_window_ / 1000, this->background_margin_, this->min_active_zones_,
                 this->motion_off_delay_, this->axis_x_ ? "x" : "y", YESNO(this->invert_), this->band_width_);
-  if (this->is_failed()) {
-    ESP_LOGE(TAG, "  Capteur non initialisé");
+  if (!this->sensor_ok_) {
+    ESP_LOGE(TAG, "  Capteur non initialisé : %s", this->failure_reason_);
+    ESP_LOGE(TAG, "  Vérifier : alimentation, SDA/SCL, adresse 0x29, LPn à l'état haut (3,3 V),\n"
+                  "  I2C_RST à la masse (GND) et PWREN à l'état haut si le module a ces broches");
   }
   LOG_SENSOR("  ", "Hauteur d'installation", this->installation_height_sensor_);
   LOG_BINARY_SENSOR("  ", "Mouvement", this->motion_binary_sensor_);
@@ -137,27 +151,51 @@ bool BlobSenseComponent::init_sensor_() {
   if (this->lpn_pin_ != nullptr)
     this->platform_reset();
 
-  uint8_t alive = 0;
-  if (vl53l5cx_is_alive(&this->dev_, &alive) != VL53L5CX_STATUS_OK || !alive) {
-    ESP_LOGE(TAG, "VL53L5CX introuvable sur le bus I2C");
+  // 1. Le capteur répond-il sur le bus ?
+  const i2c::ErrorCode probe = this->write(nullptr, 0);
+  if (probe != i2c::ERROR_OK) {
+    this->failure_reason_ = "aucune réponse sur le bus I2C";
+    ESP_LOGE(TAG, "Aucune réponse à l'adresse 0x%02X (erreur I2C %d)", this->address_, (int) probe);
     return false;
   }
 
-  ESP_LOGI(TAG, "Chargement du firmware du VL53L5CX...");
+  // 2. Est-ce bien un VL53L5CX ? (identifiant 0xF0, révision 0x02)
+  uint8_t device_id = 0, revision_id = 0;
+  uint8_t status = WrByte(&this->dev_.platform, 0x7fff, 0x00);
+  status |= RdByte(&this->dev_.platform, 0x00, &device_id);
+  status |= RdByte(&this->dev_.platform, 0x01, &revision_id);
+  status |= WrByte(&this->dev_.platform, 0x7fff, 0x02);
+  if (status != VL53L5CX_STATUS_OK) {
+    this->failure_reason_ = "erreur de lecture de l'identifiant";
+    ESP_LOGE(TAG, "Le capteur répond mais la lecture de son identifiant échoue");
+    return false;
+  }
+  if (device_id != 0xF0 || revision_id != 0x02) {
+    this->failure_reason_ = "identifiant inattendu (pas un VL53L5CX ?)";
+    ESP_LOGE(TAG, "Identifiant inattendu : 0x%02X / 0x%02X (attendu 0xF0 / 0x02)", device_id, revision_id);
+    return false;
+  }
+
+  // 3. Chargement du firmware et initialisation.
+  ESP_LOGI(TAG, "VL53L5CX détecté, chargement du firmware...");
   const uint32_t start = millis();
-  if (vl53l5cx_init(&this->dev_) != VL53L5CX_STATUS_OK) {
-    ESP_LOGE(TAG, "Échec de l'initialisation du VL53L5CX");
+  status = vl53l5cx_init(&this->dev_);
+  if (status != VL53L5CX_STATUS_OK) {
+    this->failure_reason_ = "échec du chargement du firmware";
+    ESP_LOGE(TAG, "Échec de l'initialisation du VL53L5CX (code %u, après %" PRIu32 " ms)", status,
+             millis() - start);
     return false;
   }
   ESP_LOGI(TAG, "Firmware chargé en %" PRIu32 " ms", millis() - start);
 
-  uint8_t status = VL53L5CX_STATUS_OK;
+  status = VL53L5CX_STATUS_OK;
   status |= vl53l5cx_set_resolution(&this->dev_, VL53L5CX_RESOLUTION_8X8);
   status |= vl53l5cx_set_ranging_mode(&this->dev_, VL53L5CX_RANGING_MODE_AUTONOMOUS);
   status |= vl53l5cx_set_ranging_frequency_hz(&this->dev_, this->ranging_frequency_);
   status |= vl53l5cx_set_integration_time_ms(&this->dev_, this->integration_time_);
   status |= vl53l5cx_set_target_order(&this->dev_, VL53L5CX_TARGET_ORDER_CLOSEST);
   if (status != VL53L5CX_STATUS_OK) {
+    this->failure_reason_ = "échec de la configuration";
     ESP_LOGE(TAG, "Échec de la configuration du VL53L5CX (code %u)", status);
     return false;
   }
@@ -166,6 +204,7 @@ bool BlobSenseComponent::init_sensor_() {
   if (this->active_) {
     if (vl53l5cx_start_ranging(&this->dev_) != VL53L5CX_STATUS_OK) {
       ESP_LOGE(TAG, "Impossible de démarrer les mesures");
+      this->failure_reason_ = "échec du démarrage des mesures";
       this->sensor_ok_ = false;
       return false;
     }
@@ -174,7 +213,9 @@ bool BlobSenseComponent::init_sensor_() {
     vl53l5cx_set_power_mode(&this->dev_, VL53L5CX_POWER_MODE_SLEEP);
   }
   this->last_frame_ms_ = millis();
+  this->failure_reason_ = "";
   this->status_clear_error();
+  ESP_LOGI(TAG, "VL53L5CX prêt");
   return true;
 }
 
@@ -185,13 +226,8 @@ void BlobSenseComponent::handle_sensor_error_() {
   this->error_count_ = 0;
   this->set_motion_(false);
   this->status_set_error();
-  if (!this->init_sensor_()) {
-    // Nouvelle tentative plus tard, sans bloquer la boucle principale.
-    this->set_timeout("reinit", 30000, [this]() {
-      this->error_count_ = MAX_ERRORS - 1;
-      this->handle_sensor_error_();
-    });
-  }
+  if (!this->init_sensor_())
+    this->schedule_init_retry_();
 }
 
 void BlobSenseComponent::set_active(bool active) {
@@ -512,9 +548,9 @@ uint8_t BlobSenseComponent::platform_reset() {
   if (this->lpn_pin_ == nullptr)
     return VL53L5CX_STATUS_ERROR;
   this->lpn_pin_->digital_write(false);
-  delay(10);
+  delay(100);
   this->lpn_pin_->digital_write(true);
-  delay(10);
+  delay(100);
   return VL53L5CX_STATUS_OK;
 }
 

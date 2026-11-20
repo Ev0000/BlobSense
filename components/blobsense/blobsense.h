@@ -73,6 +73,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
 
  protected:
   bool init_sensor_();
+  void schedule_init_retry_();
   void handle_sensor_error_();
   void process_frame_(uint32_t now);
   void accumulate_background_(uint32_t dt);
@@ -98,6 +99,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   bool sensor_ok_{false};
   bool ranging_{false};
   uint8_t error_count_{0};
+  const char *failure_reason_{"initialisation pas encore faite"};
 
   // Réglages
   uint8_t ranging_frequency_{15};
