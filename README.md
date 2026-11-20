@@ -315,6 +315,26 @@ Avec une installation basse, une personne occupe presque toute la matrice. Le
 comptage fonctionne toujours, mais les personnes proches les unes des autres
 sont plus souvent vues comme un seul blob.
 
+### Orientation du capteur
+
+- **À plat, face vers le sol**, sans inclinaison : toute inclinaison fausse le
+  calcul des hauteurs.
+- **Centré** dans la largeur du passage et dans l'**épaisseur** de
+  l'encadrement, pour que la bande centrale tombe dans le plan de la porte.
+- **Côtés du module parallèles à l'encadrement**, pas en diagonale. Les
+  lignes ou les colonnes de la matrice suivent alors le sens de passage, et
+  les murs du chambranle n'occupent que les colonnes (ou lignes) du bord,
+  parallèles au déplacement : ils ne gênent pas la traversée de la bande.
+- Le sens de rotation (0°, 90°, 180° ou 270°) n'a pas d'importance : il se
+  règle avec `axis` et `invert`. L'optique du capteur inverse l'image, le plus
+  simple est donc de le déterminer par un essai :
+  1. activer **Debug matrice** ;
+  2. passer lentement du côté A vers le côté B ;
+  3. si les zones actives avancent de ligne en ligne (de haut en bas dans le
+     log, ou l'inverse), garder `axis: y` ; si elles avancent de colonne en
+     colonne, mettre `axis: x` ;
+  4. le sens A/B (`invert`) sera vérifié avec les compteurs, à l'étape 3.
+
 ### Protection (verre ou « lunettes »)
 
 Une vitre placée devant le capteur renvoie une partie de la lumière émise
