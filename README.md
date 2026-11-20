@@ -48,6 +48,7 @@ en **blobs** et compte ceux qui traversent une **bande centrale**.
 | Remise à zéro | Un bouton par compteur |
 | Soustraire X | Action Home Assistant qui retire une valeur à un compteur sans risquer de perdre un passage en cours |
 | Protection | Calibration du verre de protection (crosstalk) |
+| Lecture active | Switch qui met le capteur en veille et arrête la lecture I2C, piloté par exemple par Home Assistant |
 | Debug | Visualisation optionnelle de la matrice 8×8 dans les logs |
 
 ## Fonctionnement détaillé
@@ -155,6 +156,7 @@ démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 | `button` | Remise à zéro B | |
 | `button` | Recalibrer maintenant | Optionnel |
 | `button` | Calibrer le verre de protection | Voir la section « Protection » |
+| `switch` | Lecture active | Off = capteur en veille, aucune lecture I2C |
 | `switch` | Debug matrice | Active l'affichage 8×8 dans les logs |
 | action | `subtract` | Soustrait X à un compteur |
 
@@ -227,6 +229,8 @@ button:
 switch:
   - platform: blobsense
     blobsense_id: porte_salon
+    active:
+      name: "Lecture active"
     debug_matrix:
       name: "Debug matrice"
 
@@ -257,6 +261,14 @@ Exemple : le salon a deux portes, chacune équipée d'un ESP.
 - **Somme à 0 alors que la pièce n'est pas vide (ou l'inverse)** : à gérer
   dans Home Assistant (par exemple avec une règle d'absence de mouvement
   prolongée). Le capteur ne s'en occupe pas.
+
+Le composant ne fait que mesurer et compter. Toute logique de présence
+globale (pièces sans compteur, autres capteurs, mise en veille des compteurs)
+reste dans Home Assistant.
+
+L'action `blobsense.subtract` est une action ESPHome standard. Elle peut être
+exposée via `api` (comme dans l'exemple) ou déclenchée par tout autre moyen
+disponible dans le YAML.
 
 Des exemples d'automatisations seront fournis dans `examples/`.
 
@@ -299,17 +311,36 @@ sombres. Le driver ST propose un module de **calibration du crosstalk** :
 Sans protection, cette étape est inutile. La procédure exacte sera précisée
 après les essais avec les protections achetées.
 
-## Consommation électrique (en discussion)
+## Consommation électrique
 
-Le parc prévu compte plus de 30 capteurs, donc la consommation compte. Les
-leviers envisagés :
+Avec plusieurs dizaines de capteurs, la consommation compte. Le composant agit
+sur trois points :
 
-| Levier | Principe | Statut |
-|---|---|---|
-| Mode **autonomous** du VL53L5CX | Le laser n'émet que pendant un temps d'intégration court, au lieu d'émettre en continu (mode continuous). Temps d'intégration réglable | Retenu |
-| Économie Wi-Fi de l'ESP32-C3 | `power_save_mode: light`, CPU à 80 MHz | Retenu, à valider par des mesures |
-| Mode veille piloté par Home Assistant | Le capteur passe en veille (sleep) en gardant son firmware, et se réveille en quelques ms | À discuter |
-| Réveil par PIR (type AM312) | Le capteur ToF ne mesure que si le PIR détecte une présence ou si des blobs sont encore suivis | À discuter |
+| Levier | Principe |
+|---|---|
+| Mode **autonomous** du VL53L5CX | Le laser n'émet que pendant un temps d'intégration court (réglable) à chaque image, au lieu d'émettre en continu comme en mode continuous. Un temps plus court consomme moins mais donne des mesures plus bruitées |
+| Fréquence réglable | 15 Hz par défaut. Une fréquence plus basse consomme moins, mais une personne rapide risque de traverser la bande entre deux images |
+| Switch **Lecture active** | Sur off, le VL53L5CX passe en veille (sleep) en gardant son firmware, et l'ESP ne lit plus rien sur l'I2C |
+
+Comportement du switch **Lecture active** :
+
+- **Sur off** : les pistes en cours sont abandonnées sans comptage, et le
+  mouvement et les personnes présentes passent à 0. Les compteurs gardent leur
+  valeur.
+- **Sur on** : la mesure reprend en quelques millisecondes. La carte de fond
+  d'avant la veille est conservée, et la fenêtre adaptative la corrige si
+  quelque chose a bougé entre-temps.
+- La décision de mettre en veille revient à Home Assistant (alarme armée,
+  maison vide, etc.). Le capteur n'a pas de vue d'ensemble.
+
+Côté ESP32-C3, le **Wi-Fi** est de loin le plus gros consommateur. Le
+composant n'impose aucun transport : il fonctionne avec `api` en Wi-Fi comme
+avec toute autre solution choisie dans le YAML (par exemple un bus filaire
+vers un hub). Le CPU peut tourner à 80 MHz : le traitement d'une matrice 8×8 à
+15 Hz est très léger.
+
+Les chiffres réels (ESP + capteur + convertisseur) seront mesurés pendant le
+développement et ajoutés ici.
 
 ## Limites connues
 
@@ -337,13 +368,13 @@ n'est envoyé dans la base de données de Home Assistant.
    fusion et séparation, estimation des personnes présentes.
 3. **Comptage** : bande centrale, compteurs, boutons, réglages min/max, action
    `subtract`.
-4. **Consommation** : mode autonomous, veille, réveil par PIR éventuel.
+4. **Consommation** : mode autonomous, temps d'intégration, switch Lecture
+   active, mesures de consommation.
 5. **Protection** : calibration du crosstalk et sauvegarde en flash.
 6. **Réglages sur site et documentation** : exemples Home Assistant.
 
 ## Points ouverts
 
-- Mode d'alimentation (secteur ou batterie) et stratégie de veille.
 - Licence du driver ST ULD pour sa redistribution dans ce dépôt.
 
 ## Licence
