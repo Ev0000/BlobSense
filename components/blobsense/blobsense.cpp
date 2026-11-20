@@ -405,14 +405,14 @@ bool BlobSenseComponent::in_band_(uint8_t row, uint8_t col) const {
 // Légende : nombre = hauteur (cm) d'une zone active, "." = zone valide sans
 // détection, "-" = pas de mesure. Les zones de la bande centrale sont entre [ ].
 void BlobSenseComponent::log_matrix_() {
-  char line[8 * 6 + 8];
+  char line[GRID * 8 + 8];
   ESP_LOGI(TAG, "Matrice (hauteur install. %.0f cm, mouvement: %s)", this->installation_height_mm_ / 10.0f,
            this->motion_ ? "oui" : "non");
   for (uint8_t row = 0; row < GRID; row++) {
     size_t pos = 0;
     for (uint8_t col = 0; col < GRID; col++) {
       const uint8_t z = row * GRID + col;
-      char cell[6];
+      char cell[8];
       if (bit_test(this->active_mask_, z)) {
         snprintf(cell, sizeof(cell), "%3d", this->height_cm_[z]);
       } else if (bit_test(this->valid_mask_, z)) {

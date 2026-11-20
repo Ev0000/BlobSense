@@ -2,6 +2,8 @@
 
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/macros.h"
+#include "esphome/core/version.h"
 #include "esphome/core/preferences.h"
 #include "esphome/components/button/button.h"
 #include "esphome/components/number/number.h"
@@ -53,7 +55,11 @@ class BlobSenseNumber : public number::Number, public Component, public Parented
   void setup() override {
     float value = this->initial_value_;
     if (this->restore_value_) {
+#if ESPHOME_VERSION_CODE >= VERSION_CODE(2026, 2, 0)
+      this->pref_ = this->make_entity_preference<float>();
+#else
       this->pref_ = global_preferences->make_preference<float>(this->get_preference_hash());
+#endif
       float stored;
       if (this->pref_.load(&stored))
         value = stored;
