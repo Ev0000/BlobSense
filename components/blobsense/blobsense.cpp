@@ -131,8 +131,8 @@ void BlobSenseComponent::dump_config() {
   LOG_BINARY_SENSOR("  ", "Mouvement", this->motion_binary_sensor_);
   for (const auto &ds : this->distance_sensors_) {
     LOG_SENSOR("  ", "Distance", ds.sensor);
-    ESP_LOGCONFIG(TAG, "    Zone: %u (ligne %u, colonne %u), intervalle: %" PRIu32 " ms", ds.zone, ds.zone / GRID,
-                  ds.zone % GRID, ds.interval_ms);
+    ESP_LOGCONFIG(TAG, "    Zone: %u (ligne %u, colonne %u), intervalle: %" PRIu32 " ms, lissage: %" PRIu32 " ms",
+                  ds.zone, ds.zone / GRID, ds.zone % GRID, ds.interval_ms, ds.smoothing_ms);
   }
 }
 
@@ -286,8 +286,8 @@ void BlobSenseComponent::set_active(bool active) {
     this->set_motion_(false);
     this->reset_tracking_();
     for (auto &ds : this->distance_sensors_) {
-      ds.sum = 0;
-      ds.count = 0;
+      ds.clear();
+      ds.smoothed_mm = NAN;
       ds.sensor->publish_state(NAN);
     }
   }
@@ -620,16 +620,37 @@ void BlobSenseComponent::set_motion_(bool motion) {
 void BlobSenseComponent::update_distance_sensors_(uint32_t now) {
   for (auto &ds : this->distance_sensors_) {
     if (bit_test(this->valid_mask_, ds.zone)) {
-      ds.sum += this->distance_mm_[ds.zone];
-      ds.count++;
+      ds.samples[ds.next] = this->distance_mm_[ds.zone];
+      ds.next = (ds.next + 1) % DistanceSensor::MAX_SAMPLES;
+      if (ds.count < DistanceSensor::MAX_SAMPLES)
+        ds.count++;
     }
     if (now - ds.last_publish_ms < ds.interval_ms)
       continue;
     ds.last_publish_ms = now;
-    // Pas de mesure valide sur l'intervalle (rien dans la portée) : valeur inconnue.
-    ds.sensor->publish_state(ds.count > 0 ? static_cast<float>(ds.sum) / ds.count : NAN);
-    ds.sum = 0;
-    ds.count = 0;
+
+    if (ds.count == 0) {
+      // Pas de mesure valide sur l'intervalle (rien dans la portée) : valeur inconnue.
+      ds.smoothed_mm = NAN;
+      ds.sensor->publish_state(NAN);
+      continue;
+    }
+    // Médiane des mesures de l'intervalle.
+    uint16_t sorted[DistanceSensor::MAX_SAMPLES];
+    memcpy(sorted, ds.samples, ds.count * sizeof(uint16_t));
+    std::sort(sorted, sorted + ds.count);
+    const float median = ds.count % 2 ? sorted[ds.count / 2]
+                                      : (sorted[ds.count / 2 - 1] + sorted[ds.count / 2]) / 2.0f;
+    ds.clear();
+
+    // Lissage exponentiel ; un changement franc est suivi immédiatement.
+    if (std::isnan(ds.smoothed_mm) || ds.smoothing_ms == 0 || fabsf(median - ds.smoothed_mm) > 150.0f) {
+      ds.smoothed_mm = median;
+    } else {
+      const float alpha = 1.0f - expf(-static_cast<float>(ds.interval_ms) / ds.smoothing_ms);
+      ds.smoothed_mm += alpha * (median - ds.smoothed_mm);
+    }
+    ds.sensor->publish_state(roundf(ds.smoothed_mm / 10.0f));
   }
 }
 

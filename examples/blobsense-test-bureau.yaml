@@ -45,13 +45,14 @@ blobsense:
   i2c_rst_pin: GPIO10
 
 sensor:
-  # Distance d'une zone centrale (zone 27 = ligne 3, colonne 3), moyennée sur 1 s.
+  # Distance d'une zone centrale (zone 27 = ligne 3, colonne 3), en cm, lissée.
   - platform: blobsense
     blobsense_id: capteur
     distance:
       name: "Distance centre"
       zone: 27
       update_interval: 1s
+      smoothing: 5s
   # Facultatif : une deuxième zone, par exemple dans un coin de la matrice.
   # - platform: blobsense
   #   blobsense_id: capteur

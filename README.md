@@ -168,7 +168,7 @@ démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 | Type | Entité | Notes |
 |---|---|---|
 | `sensor` | Hauteur d'installation | cm |
-| `sensor` | Distance | mm, distance brute d'une zone, moyennée sur `update_interval` |
+| `sensor` | Distance | cm (entier), distance brute d'une zone, médiane par intervalle puis lissage |
 | `sensor` | Personnes présentes | Estimation |
 | `sensor` | Compteur A | −999 … 999 |
 | `sensor` | Compteur B | −999 … 999 |
@@ -232,7 +232,8 @@ sensor:
     distance:               # distance brute d'une zone (essais, télémètre)
       name: "Distance centre"
       zone: 27              # 0 à 63 (ligne × 8 + colonne), 27 par défaut
-      update_interval: 1s   # moyenne des mesures valides sur cet intervalle
+      update_interval: 1s   # fréquence de publication (médiane des mesures de l'intervalle)
+      smoothing: 5s         # lissage (constante de temps), 0s pour le désactiver
     people_count:
       name: "Personnes présentes"
     counter_a:              # variation d'occupation du côté A (−999 … 999)
@@ -468,10 +469,12 @@ Le capteur **Distance** permet de tester le capteur sans l'installer :
 [`examples/blobsense-test-bureau.yaml`](examples/blobsense-test-bureau.yaml).
 
 - Il publie la distance mesurée par **une zone** (par défaut la zone 27, l'une
-  des 4 zones centrales), en millimètres.
-- La valeur publiée est la **moyenne des mesures valides** sur
-  `update_interval` (1 s par défaut). Cela lisse le bruit sans saturer Home
-  Assistant avec 15 valeurs par seconde.
+  des 4 zones centrales), en **centimètres entiers**.
+- À chaque `update_interval` (1 s par défaut), on prend la **médiane** des
+  mesures valides de l'intervalle, ce qui écarte les mesures aberrantes. Cette
+  valeur est ensuite **lissée** avec une constante de temps `smoothing` (5 s
+  par défaut). Un changement franc (plus de 15 cm) est suivi immédiatement,
+  sans attendre le lissage.
 - S'il n'y a aucune mesure valide sur l'intervalle (rien dans la portée), la
   valeur est **inconnue**.
 - Il est indépendant de la carte de fond, des hauteurs min/max et de la

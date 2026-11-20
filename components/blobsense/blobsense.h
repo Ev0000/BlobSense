@@ -23,13 +23,24 @@ static constexpr uint8_t GRID = 8;
 static constexpr uint8_t ZONES = GRID * GRID;
 
 // Capteur de distance brute d'une zone (tests, mesure de distance simple).
+// Valeur publiée : médiane des mesures de l'intervalle (écarte les mesures
+// aberrantes), puis lissage exponentiel sur `smoothing_ms`. Un changement
+// franc (> 15 cm) est suivi immédiatement.
 struct DistanceSensor {
+  static constexpr uint8_t MAX_SAMPLES = 64;
   sensor::Sensor *sensor;
   uint8_t zone;
   uint32_t interval_ms;
-  uint32_t sum{0};
-  uint16_t count{0};
+  uint32_t smoothing_ms;
+  uint16_t samples[MAX_SAMPLES]{};
+  uint8_t count{0};
+  uint8_t next{0};
+  float smoothed_mm{NAN};
   uint32_t last_publish_ms{0};
+  void clear() {
+    this->count = 0;
+    this->next = 0;
+  }
 };
 
 class BlobSenseComponent : public Component, public i2c::I2CDevice {
@@ -62,8 +73,13 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void set_people_count_sensor(sensor::Sensor *s) { this->people_count_sensor_ = s; }
   void set_counter_a_sensor(sensor::Sensor *s) { this->counter_a_sensor_ = s; }
   void set_counter_b_sensor(sensor::Sensor *s) { this->counter_b_sensor_ = s; }
-  void add_distance_sensor(sensor::Sensor *s, uint8_t zone, uint32_t interval_ms) {
-    this->distance_sensors_.push_back(DistanceSensor{s, zone, interval_ms});
+  void add_distance_sensor(sensor::Sensor *s, uint8_t zone, uint32_t interval_ms, uint32_t smoothing_ms) {
+    DistanceSensor ds{};
+    ds.sensor = s;
+    ds.zone = zone;
+    ds.interval_ms = interval_ms;
+    ds.smoothing_ms = smoothing_ms;
+    this->distance_sensors_.push_back(ds);
   }
 
   // --- Commandes (numbers, switches, buttons) ---

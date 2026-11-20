@@ -8,7 +8,6 @@ from esphome.const import (
     CONF_UPDATE_INTERVAL,
     STATE_CLASS_MEASUREMENT,
     UNIT_CENTIMETER,
-    UNIT_MILLIMETER,
 )
 
 from . import CONF_BLOBSENSE_ID, BlobSenseComponent
@@ -18,6 +17,7 @@ CONF_PEOPLE_COUNT = "people_count"
 CONF_COUNTER_A = "counter_a"
 CONF_COUNTER_B = "counter_b"
 CONF_ZONE = "zone"
+CONF_SMOOTHING = "smoothing"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -50,7 +50,7 @@ CONFIG_SCHEMA = cv.Schema(
         # de distance simple. Plusieurs blocs « platform: blobsense » peuvent
         # chacun déclarer une distance sur une zone différente.
         cv.Optional(CONF_DISTANCE): sensor.sensor_schema(
-            unit_of_measurement=UNIT_MILLIMETER,
+            unit_of_measurement=UNIT_CENTIMETER,
             accuracy_decimals=0,
             device_class=DEVICE_CLASS_DISTANCE,
             state_class=STATE_CLASS_MEASUREMENT,
@@ -61,6 +61,8 @@ CONFIG_SCHEMA = cv.Schema(
                 cv.Optional(
                     CONF_UPDATE_INTERVAL, default="1s"
                 ): cv.positive_time_period_milliseconds,
+                # Lissage exponentiel (constante de temps) ; 0s pour le désactiver.
+                cv.Optional(CONF_SMOOTHING, default="5s"): cv.positive_time_period_milliseconds,
             }
         ),
     }
@@ -85,6 +87,9 @@ async def to_code(config):
         sens = await sensor.new_sensor(conf)
         cg.add(
             hub.add_distance_sensor(
-                sens, conf[CONF_ZONE], conf[CONF_UPDATE_INTERVAL].total_milliseconds
+                sens,
+                conf[CONF_ZONE],
+                conf[CONF_UPDATE_INTERVAL].total_milliseconds,
+                conf[CONF_SMOOTHING].total_milliseconds,
             )
         )
