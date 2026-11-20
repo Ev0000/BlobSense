@@ -186,6 +186,8 @@ démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 | `button` | Remise à zéro A | |
 | `button` | Remise à zéro B | |
 | `button` | Recalibrer maintenant | Optionnel |
+| `button` | Calibrer le sens de passage | Déduit `axis` et `invert` d'un passage de A vers B |
+| `text_sensor` | Orientation | Réglage en vigueur, par exemple `axis: y, invert: false (calibré)` |
 | `button` | Calibrer le verre de protection | Voir la section « Protection » |
 | `switch` | Lecture active | Off = capteur en veille, aucune lecture I2C |
 | `switch` | Debug matrice | Active l'affichage 8×8 dans les logs |
@@ -230,6 +232,7 @@ blobsense:
   # motion_off_delay: 2s      # délai avant de repasser le mouvement à off
   # axis: y                   # axe de passage dans la matrice (x ou y)
   # invert: false             # inverse les côtés A et B
+  # direction_calibration_duration: 5s  # durée de la calibration du sens (bouton)
   # band_width: 2             # largeur de la bande centrale, en zones
   # peak_prominence: 15cm     # creux minimal entre deux têtes pour les séparer
 
@@ -282,11 +285,19 @@ button:
     blobsense_id: porte_salon
     recalibrate:
       name: "Recalibrer maintenant"
+    calibrate_direction:
+      name: "Calibrer le sens de passage"
     reset_a:
       name: "RAZ compteur A"
     reset_b:
       name: "RAZ compteur B"
     # ⏳ calibrate_cover
+
+text_sensor:
+  - platform: blobsense
+    blobsense_id: porte_salon
+    orientation:            # orientation en vigueur et son origine (YAML ou calibré)
+      name: "Orientation"
 
 # Action blobsense.subtract, ici exposée à Home Assistant via l'API
 # (action HA : esphome.<nom_appareil>_subtract). Elle peut aussi être appelée
@@ -371,14 +382,24 @@ sont plus souvent vues comme un seul blob.
   les murs du chambranle n'occupent que les colonnes (ou lignes) du bord,
   parallèles au déplacement : ils ne gênent pas la traversée de la bande.
 - Le sens de rotation (0°, 90°, 180° ou 270°) n'a pas d'importance : il se
-  règle avec `axis` et `invert`. L'optique du capteur inverse l'image, le plus
-  simple est donc de le déterminer par un essai :
-  1. activer **Debug matrice** ;
-  2. passer lentement du côté A vers le côté B ;
-  3. si les zones actives avancent de ligne en ligne (de haut en bas dans le
-     log, ou l'inverse), garder `axis: y` ; si elles avancent de colonne en
-     colonne, mettre `axis: x` ;
-  4. le sens A/B (`invert`) sera vérifié avec les compteurs, à l'étape 3.
+  règle avec `axis` et `invert`, ou automatiquement avec le bouton
+  **Calibrer le sens de passage** :
+  1. appuyer sur le bouton, passage vide ;
+  2. dans les 5 s (`direction_calibration_duration`), passer sous le capteur
+     **du côté A vers le côté B**, d'un pas normal ;
+  3. le composant déduit l'axe (celui du plus grand déplacement) et le sens,
+     les applique immédiatement et les **sauvegarde en flash** (une écriture
+     par calibration) ;
+  4. le résultat est écrit dans les logs et dans le capteur **Orientation**.
+     Si aucun passage net n'est vu (moins de 2,5 zones de déplacement),
+     l'orientation reste inchangée.
+- Pendant la calibration, les passages ne modifient pas les compteurs.
+- Si `axis` ou `invert` sont modifiés dans le YAML après une calibration,
+  c'est le YAML qui s'applique, et la calibration enregistrée est ignorée.
+- Réglage manuel, sans le bouton : activer **Debug matrice**, passer
+  lentement de A vers B, puis choisir `axis: y` si les zones actives avancent
+  de ligne en ligne ou `axis: x` si elles avancent de colonne en colonne, et
+  `invert` selon le sens des messages `Passage`.
 
 ### Protection (verre ou « lunettes »)
 
@@ -514,8 +535,8 @@ d'environ 10 cm de côté, la cible doit donc bien être dans l'axe.
 4. Passer sous le capteur : les zones actives affichent la hauteur mesurée
    (en cm), le mouvement passe à on, une piste apparaît, et un message
    `Passage A → B` ou `Passage B → A` est écrit à la traversée.
-5. Vérifier `axis` (voir « Orientation du capteur ») puis le sens : si les
-   passages sont inversés, mettre `invert: true`.
+5. Régler l'orientation avec le bouton **Calibrer le sens de passage** (voir
+   « Orientation du capteur »), ou à la main avec `axis` et `invert`.
 
 À me remonter : des passages seuls, à deux côte à côte, à deux en sens
 inverse, un demi-tour sous le capteur, avec les messages obtenus et si

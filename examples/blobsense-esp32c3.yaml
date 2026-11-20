@@ -95,7 +95,15 @@ button:
     blobsense_id: porte_salon
     recalibrate:
       name: "Recalibrer maintenant"
+    calibrate_direction:
+      name: "Calibrer le sens de passage"
     reset_a:
       name: "RAZ compteur A"
     reset_b:
       name: "RAZ compteur B"
+
+text_sensor:
+  - platform: blobsense
+    blobsense_id: porte_salon
+    orientation:
+      name: "Orientation"

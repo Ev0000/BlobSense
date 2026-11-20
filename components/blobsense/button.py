@@ -8,6 +8,7 @@ from . import CONF_BLOBSENSE_ID, BlobSenseComponent, blobsense_ns
 CONF_RECALIBRATE = "recalibrate"
 CONF_RESET_A = "reset_a"
 CONF_RESET_B = "reset_b"
+CONF_CALIBRATE_DIRECTION = "calibrate_direction"
 
 BlobSenseButton = blobsense_ns.class_("BlobSenseButton", button.Button)
 ButtonType = blobsense_ns.enum("ButtonType", is_class=True)
@@ -19,6 +20,11 @@ CONFIG_SCHEMA = cv.Schema(
             BlobSenseButton,
             entity_category=ENTITY_CATEGORY_CONFIG,
             icon="mdi:refresh",
+        ),
+        cv.Optional(CONF_CALIBRATE_DIRECTION): button.button_schema(
+            BlobSenseButton,
+            entity_category=ENTITY_CATEGORY_CONFIG,
+            icon="mdi:swap-vertical",
         ),
         cv.Optional(CONF_RESET_A): button.button_schema(
             BlobSenseButton,
@@ -38,6 +44,7 @@ async def to_code(config):
         (CONF_RECALIBRATE, ButtonType.RECALIBRATE),
         (CONF_RESET_A, ButtonType.RESET_A),
         (CONF_RESET_B, ButtonType.RESET_B),
+        (CONF_CALIBRATE_DIRECTION, ButtonType.CALIBRATE_DIRECTION),
     ):
         if conf := config.get(key):
             btn = await button.new_button(conf, type_)

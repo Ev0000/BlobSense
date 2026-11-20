@@ -9,6 +9,8 @@
 #include "esphome/components/i2c/i2c.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/core/preferences.h"
 
 extern "C" {
 #include "vl53l5cx_api.h"
@@ -64,6 +66,8 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void set_motion_off_delay(uint32_t ms) { this->motion_off_delay_ = ms; }
   void set_axis_x(bool axis_x) { this->axis_x_ = axis_x; }
   void set_invert(bool invert) { this->invert_ = invert; }
+  void set_direction_calibration_duration(uint32_t ms) { this->direction_calibration_ms_ = ms; }
+  void set_orientation_text_sensor(text_sensor::TextSensor *s) { this->orientation_text_sensor_ = s; }
   void set_band_width(uint8_t width) { this->band_width_ = width; }
   void set_peak_prominence(uint16_t mm) { this->peak_prominence_ = mm; }
 
@@ -90,6 +94,9 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void set_active(bool active);
   void set_debug(bool debug) { this->debug_ = debug; }
   void recalibrate();
+  // Calibration du sens : l'utilisateur passe de A vers B pendant la durée
+  // configurée ; axis et invert sont déduits de sa trajectoire.
+  void calibrate_direction();
   // Compteurs : remise à zéro et soustraction (b = false pour A, true pour B).
   void reset_counter(bool b);
   void subtract(bool b, int32_t value);
@@ -118,6 +125,11 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void add_to_counters_(int32_t delta_a, int32_t delta_b);
   void publish_counters_();
   void reset_tracking_();
+  void apply_orientation_();
+  void restore_orientation_();
+  void observe_direction_(uint32_t now);
+  void finish_direction_calibration_();
+  void publish_orientation_(bool calibrated);
   void update_distance_sensors_(uint32_t now);
   bool in_band_(uint8_t row, uint8_t col) const;
   void log_matrix_();
@@ -155,6 +167,17 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   float max_height_mm_{2100.0f};
   bool active_{true};
   bool debug_{false};
+
+  // Calibration du sens de passage
+  uint32_t direction_calibration_ms_{5000};
+  bool calibrating_direction_{false};
+  uint32_t calibration_end_ms_{0};
+  uint16_t calibration_frames_{0};
+  float calibration_first_row_{0}, calibration_first_col_{0};
+  float calibration_last_row_{0}, calibration_last_col_{0};
+  bool yaml_axis_x_{false};
+  bool yaml_invert_{false};
+  ESPPreferenceObject orientation_pref_;
 
   // Géométrie : cosinus de l'angle de chaque zone par rapport à la verticale
   float cos_zone_[ZONES]{};
@@ -207,6 +230,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   sensor::Sensor *counter_a_sensor_{nullptr};
   sensor::Sensor *counter_b_sensor_{nullptr};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
+  text_sensor::TextSensor *orientation_text_sensor_{nullptr};
   std::vector<DistanceSensor> distance_sensors_;
 };
 

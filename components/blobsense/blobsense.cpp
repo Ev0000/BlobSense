@@ -5,6 +5,7 @@
 #include <cstdio>
 
 #include "esphome/core/application.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -71,13 +72,7 @@ void BlobSenseComponent::setup() {
     this->int_pin_->attach_interrupt(&BlobSenseComponent::gpio_intr, this, gpio::INTERRUPT_FALLING_EDGE);
   }
 
-  TrackerConfig tc;
-  tc.axis_x = this->axis_x_;
-  tc.invert = this->invert_;
-  tc.band_width = this->band_width_;
-  tc.prominence_mm = this->peak_prominence_;
-  this->tracker_.configure(tc);
-  this->reset_tracking_();
+  this->restore_orientation_();
 
   this->history_ = new uint16_t[ZONES][HIST_BINS]();  // NOLINT
 
@@ -514,6 +509,8 @@ void BlobSenseComponent::detect_(uint32_t now) {
     this->reset_tracking_();
   }
   this->update_motion_(now);
+  if (this->calibrating_direction_)
+    this->observe_direction_(now);
 }
 
 // Mouvement : au moins une piste confirmée (vue plusieurs images de suite)
@@ -539,7 +536,9 @@ void BlobSenseComponent::track_(uint64_t active) {
 
   const uint8_t ab = this->tracker_.crossings_ab();
   const uint8_t ba = this->tracker_.crossings_ba();
-  if (ab > 0 || ba > 0) {
+  if ((ab > 0 || ba > 0) && this->calibrating_direction_) {
+    ESP_LOGI(TAG, "Passage ignoré pendant la calibration du sens");
+  } else if (ab > 0 || ba > 0) {
     // Un passage de A vers B retire une personne au côté A et en ajoute une au côté B.
     this->add_to_counters_(static_cast<int32_t>(ba) - ab, static_cast<int32_t>(ab) - ba);
     if (ab > 0)
@@ -556,6 +555,127 @@ void BlobSenseComponent::track_(uint64_t active) {
     if (this->people_count_sensor_ != nullptr)
       this->people_count_sensor_->publish_state(people);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Orientation (axis / invert) et calibration du sens de passage
+// ---------------------------------------------------------------------------
+
+// Orientation calibrée, sauvegardée en flash. Les valeurs du YAML au moment
+// de la calibration sont gardées : si le YAML est modifié ensuite, il reprend
+// la main sur la calibration.
+struct OrientationPref {
+  uint8_t magic;
+  uint8_t axis_x;
+  uint8_t invert;
+  uint8_t yaml_axis_x;
+  uint8_t yaml_invert;
+};
+static constexpr uint8_t ORIENTATION_MAGIC = 0xB5;
+
+void BlobSenseComponent::apply_orientation_() {
+  TrackerConfig tc;
+  tc.axis_x = this->axis_x_;
+  tc.invert = this->invert_;
+  tc.band_width = this->band_width_;
+  tc.prominence_mm = this->peak_prominence_;
+  this->tracker_.configure(tc);
+  this->reset_tracking_();
+}
+
+void BlobSenseComponent::restore_orientation_() {
+  this->yaml_axis_x_ = this->axis_x_;
+  this->yaml_invert_ = this->invert_;
+  this->orientation_pref_ =
+      global_preferences->make_preference<OrientationPref>(fnv1_hash("blobsense_orientation") ^ this->address_);
+  OrientationPref pref{};
+  bool calibrated = false;
+  if (this->orientation_pref_.load(&pref) && pref.magic == ORIENTATION_MAGIC) {
+    if (pref.yaml_axis_x == this->yaml_axis_x_ && pref.yaml_invert == this->yaml_invert_) {
+      this->axis_x_ = pref.axis_x;
+      this->invert_ = pref.invert;
+      calibrated = true;
+    } else {
+      ESP_LOGI(TAG, "axis/invert modifiés dans le YAML depuis la calibration : le YAML est utilisé");
+    }
+  }
+  this->apply_orientation_();
+  this->publish_orientation_(calibrated);
+}
+
+void BlobSenseComponent::publish_orientation_(bool calibrated) {
+  char text[64];
+  snprintf(text, sizeof(text), "axis: %s, invert: %s (%s)", this->axis_x_ ? "x" : "y",
+           this->invert_ ? "true" : "false", calibrated ? "calibré" : "YAML");
+  ESP_LOGI(TAG, "Orientation : %s", text);
+  if (this->orientation_text_sensor_ != nullptr)
+    this->orientation_text_sensor_->publish_state(text);
+}
+
+void BlobSenseComponent::calibrate_direction() {
+  if (!this->sensor_ok_ || !this->ranging_) {
+    ESP_LOGW(TAG, "Calibration du sens impossible : capteur non prêt ou lecture en veille");
+    return;
+  }
+  ESP_LOGI(TAG, "Calibration du sens : passez sous le capteur de A vers B dans les %" PRIu32 " s",
+           this->direction_calibration_ms_ / 1000);
+  this->calibrating_direction_ = true;
+  this->calibration_end_ms_ = millis() + this->direction_calibration_ms_;
+  this->calibration_frames_ = 0;
+}
+
+// Pendant la calibration, on note la position (ligne, colonne brutes de la
+// matrice) du centre des zones actives, pondéré par la hauteur, à la première
+// et à la dernière image où quelqu'un est vu.
+void BlobSenseComponent::observe_direction_(uint32_t now) {
+  if (__builtin_popcountll(this->active_mask_) >= 2) {
+    float sw = 0, sr = 0, sc = 0;
+    for (uint8_t z = 0; z < ZONES; z++) {
+      if (!bit_test(this->active_mask_, z))
+        continue;
+      const float w = this->height_mm_[z];
+      sw += w;
+      sr += w * (z / GRID);
+      sc += w * (z % GRID);
+    }
+    const float row = sr / sw, col = sc / sw;
+    if (this->calibration_frames_ == 0) {
+      this->calibration_first_row_ = row;
+      this->calibration_first_col_ = col;
+    }
+    this->calibration_last_row_ = row;
+    this->calibration_last_col_ = col;
+    if (this->calibration_frames_ < UINT16_MAX)
+      this->calibration_frames_++;
+  }
+  if (static_cast<int32_t>(now - this->calibration_end_ms_) >= 0)
+    this->finish_direction_calibration_();
+}
+
+void BlobSenseComponent::finish_direction_calibration_() {
+  this->calibrating_direction_ = false;
+  const float drow = this->calibration_last_row_ - this->calibration_first_row_;
+  const float dcol = this->calibration_last_col_ - this->calibration_first_col_;
+  const float moved = std::max(fabsf(drow), fabsf(dcol));
+  if (this->calibration_frames_ < 5 || moved < 2.5f) {
+    ESP_LOGW(TAG,
+             "Calibration du sens échouée : aucun passage net détecté (%u images, déplacement %.1f zones). "
+             "Orientation inchangée.",
+             this->calibration_frames_, moved);
+    return;
+  }
+  // L'axe de passage est celui du plus grand déplacement ; A → B correspond à
+  // une position croissante (0 = A, 7 = B) le long de cet axe.
+  this->axis_x_ = fabsf(dcol) > fabsf(drow);
+  const float delta = this->axis_x_ ? dcol : drow;
+  this->invert_ = delta < 0;
+  ESP_LOGI(TAG, "Calibration du sens réussie : déplacement lignes %.1f, colonnes %.1f", drow, dcol);
+
+  OrientationPref pref{ORIENTATION_MAGIC, this->axis_x_, this->invert_, this->yaml_axis_x_, this->yaml_invert_};
+  this->orientation_pref_.save(&pref);
+  global_preferences->sync();
+  this->apply_orientation_();
+  this->publish_orientation_(true);
 }
 
 // ---------------------------------------------------------------------------
