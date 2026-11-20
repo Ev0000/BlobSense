@@ -26,6 +26,13 @@ static constexpr uint32_t FRAME_GAP_MS = 1000;
 static constexpr uint8_t MAX_ERRORS = 10;
 // Taille des transferts I2C (le bus ESP-IDF d'ESPHome a un timeout de 100 ms par transaction).
 static constexpr uint32_t I2C_CHUNK = 256;
+// Historique des distances : largeur d'une tranche, tolérance autour de la
+// mesure (± tranches) et part de l'historique au-delà de laquelle une distance
+// est considérée comme habituelle.
+static constexpr uint16_t HIST_BIN_MM = 50;
+static constexpr uint8_t HIST_TOLERANCE_BINS = 2;
+static constexpr float HIST_FAMILIAR_SHARE = 0.25f;
+static constexpr uint16_t HIST_MIN_SAMPLES = 50;
 // Bornes des compteurs de passage.
 static constexpr int32_t COUNTER_LIMIT = 999;
 // Délai entre deux tentatives d'initialisation.
@@ -72,6 +79,8 @@ void BlobSenseComponent::setup() {
   this->tracker_.configure(tc);
   this->reset_tracking_();
 
+  this->history_ = new uint16_t[ZONES][HIST_BINS]();  // NOLINT
+
   this->dev_.platform.handle = this;
   this->dev_.platform.address = VL53L5CX_DEFAULT_I2C_ADDRESS;
 
@@ -104,7 +113,7 @@ void BlobSenseComponent::dump_config() {
   ESP_LOGCONFIG(TAG,
                 "  Fréquence: %u Hz, intégration: %u ms (mode autonomous)\n"
                 "  Fenêtre de fond: %" PRIu32 " s, fenêtre de démarrage: %" PRIu32 " s, marge: %u mm\n"
-                "  Zones actives min: %u, retombée du mouvement: %" PRIu32 " ms\n"
+                "  Taille min. d'une piste pour le mouvement: %u zones, retombée du mouvement: %" PRIu32 " ms\n"
                 "  Axe: %s, inversé: %s, largeur de bande: %u, creux entre sommets: %u mm",
                 this->ranging_frequency_, this->integration_time_, this->background_window_ / 1000,
                 this->startup_window_ / 1000, this->background_margin_, this->min_active_zones_,
@@ -310,6 +319,7 @@ void BlobSenseComponent::process_frame_(uint32_t now) {
   this->update_distance_sensors_(now);
   this->accumulate_background_(dt);
   this->detect_(now);
+  this->learn_distances_(dt);
 
   if (this->debug_ && now - this->last_debug_ms_ >= DEBUG_PERIOD_MS) {
     this->last_debug_ms_ = now;
@@ -409,6 +419,55 @@ void BlobSenseComponent::recalibrate() {
   this->block_elapsed_ = 0;
   this->period_elapsed_ = 0;
   this->learning_ = true;
+  if (this->history_ != nullptr) {
+    for (uint8_t z = 0; z < ZONES; z++) {
+      for (uint8_t b = 0; b < HIST_BINS; b++)
+        this->history_[z][b] = 0;
+      this->history_total_[z] = 0;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Historique des distances
+// ---------------------------------------------------------------------------
+
+void BlobSenseComponent::learn_distances_(uint32_t dt) {
+  if (this->history_ == nullptr)
+    return;
+  for (uint8_t z = 0; z < ZONES; z++) {
+    if (!bit_test(this->valid_mask_, z))
+      continue;
+    uint16_t bin = this->distance_mm_[z] / HIST_BIN_MM;
+    if (bin >= HIST_BINS)
+      bin = HIST_BINS - 1;
+    if (this->history_[z][bin] < UINT16_MAX)
+      this->history_[z][bin]++;
+    if (this->history_total_[z] < UINT16_MAX)
+      this->history_total_[z]++;
+  }
+  // Oubli progressif : l'historique est divisé par deux à chaque demi-fenêtre.
+  this->history_elapsed_ += dt;
+  if (this->history_elapsed_ >= this->background_window_ / 2) {
+    this->history_elapsed_ = 0;
+    for (uint8_t z = 0; z < ZONES; z++) {
+      for (uint8_t b = 0; b < HIST_BINS; b++)
+        this->history_[z][b] /= 2;
+      this->history_total_[z] /= 2;
+    }
+  }
+}
+
+bool BlobSenseComponent::is_familiar_(uint8_t zone, uint16_t distance_mm) const {
+  if (this->history_ == nullptr || this->history_total_[zone] < HIST_MIN_SAMPLES)
+    return false;
+  const int16_t bin = distance_mm / HIST_BIN_MM;
+  uint32_t near = 0;
+  for (int16_t b = bin - HIST_TOLERANCE_BINS; b <= bin + HIST_TOLERANCE_BINS; b++) {
+    if (b >= 0 && b < HIST_BINS)
+      near += this->history_[zone][b];
+  }
+  return near >= HIST_FAMILIAR_SHARE * this->history_total_[zone];
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +476,6 @@ void BlobSenseComponent::recalibrate() {
 
 void BlobSenseComponent::detect_(uint32_t now) {
   this->active_mask_ = 0;
-  uint8_t active_count = 0;
   const bool have_height = !std::isnan(this->installation_height_mm_);
 
   for (uint8_t z = 0; z < ZONES; z++) {
@@ -440,22 +498,35 @@ void BlobSenseComponent::detect_(uint32_t now) {
       continue;  // rien de plus proche que le fond
     if (h < this->min_height_mm_ || h > this->max_height_mm_)
       continue;  // hors de la plage de hauteur
+    if (this->is_familiar_(z, this->distance_mm_[z]))
+      continue;  // distance habituelle pour cette zone : objet fixe ou bruit
 
     bit_set(this->active_mask_, z);
-    active_count++;
-  }
-
-  if (active_count >= this->min_active_zones_) {
-    this->last_active_ms_ = now;
-    this->set_motion_(true);
-  } else if (this->motion_ && now - this->last_active_ms_ >= this->motion_off_delay_) {
-    this->set_motion_(false);
   }
 
   if (this->background_valid_ && have_height) {
     this->track_(this->active_mask_);
   } else {
     this->reset_tracking_();
+  }
+  this->update_motion_(now);
+}
+
+// Mouvement : au moins une piste confirmée (vue plusieurs images de suite)
+// d'au moins `min_active_zones` zones. Le bruit et les zones isolées qui
+// clignotent ne déclenchent donc pas le mouvement.
+void BlobSenseComponent::update_motion_(uint32_t now) {
+  bool present = false;
+  for (uint8_t i = 0; i < this->tracker_.track_count(); i++) {
+    const Track &t = this->tracker_.track(i);
+    if (t.confirmed && t.missed == 0 && t.size >= this->min_active_zones_)
+      present = true;
+  }
+  if (present) {
+    this->last_active_ms_ = now;
+    this->set_motion_(true);
+  } else if (this->motion_ && now - this->last_active_ms_ >= this->motion_off_delay_) {
+    this->set_motion_(false);
   }
 }
 

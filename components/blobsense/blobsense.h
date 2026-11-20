@@ -89,6 +89,9 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void handle_sensor_error_();
   void process_frame_(uint32_t now);
   void accumulate_background_(uint32_t dt);
+  bool is_familiar_(uint8_t zone, uint16_t distance_mm) const;
+  void learn_distances_(uint32_t dt);
+  void update_motion_(uint32_t now);
   void close_background_period_();
   void update_installation_height_();
   void detect_(uint32_t now);
@@ -162,6 +165,15 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   bool learning_{true};             // fenêtre courte de démarrage / recalibration
   uint16_t background_mm_[ZONES]{};
   bool background_valid_{false};
+
+  // Historique des distances de chaque zone (par tranches de 50 mm). Une
+  // mesure n'est « nouvelle » que si sa distance est rare dans l'historique :
+  // cela écarte les objets fixes, les zones à cheval entre un objet et le sol
+  // et les zones bruitées.
+  static constexpr uint8_t HIST_BINS = 80;  // 0 à 4 m
+  uint16_t (*history_)[HIST_BINS]{nullptr};
+  uint16_t history_total_[ZONES]{};
+  uint32_t history_elapsed_{0};
   float installation_height_mm_{NAN};
 
   // Mouvement

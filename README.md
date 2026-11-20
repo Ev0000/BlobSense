@@ -85,18 +85,26 @@ Cas particuliers :
 |---|---|
 | Meuble retiré | Pris en compte à la mise à jour suivante |
 | Meuble ajouté | Vu comme un blob immobile, puis intégré au fond s'il reste là pendant toute une fenêtre. Il ne traverse pas la bande, donc il n'est pas compté |
-| Personne immobile plus de X min | Intégrée au fond, sans effet sur le comptage. Le fond se corrige après son départ |
+| Personne immobile plusieurs minutes | Sa distance devient habituelle (environ un quart de la fenêtre, soit ~2 à 3 min par défaut) et elle n'est plus détectée. Le fond se corrige après son départ |
 
 ### 2. Traitement de chaque image (8×8)
 
 1. **Hauteur par zone** : `h = hauteur_installation − distance × cos(angle_zone)`,
    c'est-à-dire la hauteur de l'objet au-dessus du sol. Seules les mesures
    dont le statut du capteur est valide (5 ou 9) sont prises en compte.
-2. **Masque actif** : la zone mesure au moins `background_margin` (10 cm par
-   défaut) de moins que la carte de fond, **et** `h_min ≤ h ≤ h_max`. Le
-   premier test écarte les murs et les meubles, le second filtre par taille.
-3. **Mouvement** : au moins N zones actives, avec un anti-rebond pour la
-   retombée.
+2. **Masque actif** : une zone est active si elle remplit trois conditions :
+   - elle mesure au moins `background_margin` (10 cm par défaut) de moins que
+     la carte de fond ;
+   - `h_min ≤ h ≤ h_max` ;
+   - la distance mesurée est **inhabituelle** pour cette zone. Chaque zone
+     garde un historique de ses distances (tranches de 5 cm, oubli progressif
+     sur `background_window`). Une distance qui représente plus d'un quart de
+     l'historique est habituelle : objet fixe, zone à cheval entre un meuble
+     et le sol, zone bruitée. Elle est ignorée.
+3. **Mouvement** : au moins une **piste confirmée** (vue 3 images de suite)
+   d'au moins `min_active_zones` zones (2 par défaut). Il repasse à off
+   `motion_off_delay` après la dernière piste (2 s par défaut). Les zones
+   isolées qui clignotent ne le déclenchent donc pas.
 4. **Blobs** : les zones actives sont traitées de la plus haute à la plus
    basse et forment des blobs autour des sommets (têtes). Quand deux blobs se
    touchent, ils restent séparés si le creux entre leurs sommets dépasse
@@ -209,7 +217,7 @@ blobsense:
   # background_window: 10min  # fenêtre de la carte de fond adaptative
   # startup_window: 10s       # fenêtre courte au démarrage et à la recalibration
   # background_margin: 10cm   # écart minimal avec le fond pour qu'une zone soit active
-  # min_active_zones: 2       # zones actives nécessaires pour signaler un mouvement
+  # min_active_zones: 2       # taille minimale (zones) d'une piste pour signaler un mouvement
   # motion_off_delay: 2s      # délai avant de repasser le mouvement à off
   # axis: y                   # axe de passage dans la matrice (x ou y)
   # invert: false             # inverse les côtés A et B
