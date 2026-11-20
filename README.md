@@ -213,7 +213,8 @@ blobsense:
   i2c_rst_pin: GPIO10       # recommandé : broche I2C_RST (déblocage de l'I2C)
   # Options et valeurs par défaut :
   # ranging_frequency: 15     # Hz (1 à 15)
-  # integration_time: 10ms    # temps d'émission du laser par image (mode autonomous)
+  # integration_time: 10ms    # temps d'émission du laser par sous-mesure (4 par image en 8×8),
+  #                           # maximum 16 ms à 15 Hz (4 × 16 + 1 = 65 ms < 66,7 ms)
   # background_window: 10min  # fenêtre de la carte de fond adaptative
   # startup_window: 10s       # fenêtre courte au démarrage et à la recalibration
   # background_margin: 10cm   # écart minimal avec le fond pour qu'une zone soit active
@@ -390,7 +391,7 @@ sur trois points :
 
 | Levier | Principe |
 |---|---|
-| Mode **autonomous** du VL53L5CX | Le laser n'émet que pendant un temps d'intégration court (réglable) à chaque image, au lieu d'émettre en continu comme en mode continuous. Un temps plus court consomme moins mais donne des mesures plus bruitées |
+| Mode **autonomous** du VL53L5CX | Le laser n'émet que pendant `integration_time` à chaque sous-mesure, au lieu d'émettre en continu comme en mode continuous. En 8×8, une image compte 4 sous-mesures : il faut 4 × `integration_time` + 1 ms inférieur à la période (66,7 ms à 15 Hz, soit 16 ms au maximum). Un temps plus court consomme moins mais donne des mesures plus bruitées |
 | Fréquence réglable | 15 Hz par défaut. Une fréquence plus basse consomme moins, mais une personne rapide risque de traverser la bande entre deux images |
 | Switch **Lecture active** | Sur off, le VL53L5CX passe en veille (sleep) en gardant son firmware, et l'ESP ne lit plus rien sur l'I2C |
 

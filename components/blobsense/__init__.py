@@ -38,12 +38,18 @@ CONF_VALUE = "value"
 
 
 def _validate(config):
-    period_ms = 1000 / config[CONF_RANGING_FREQUENCY]
+    # En 8×8, une image est faite de 4 intégrations successives, plus 1 ms de
+    # surcoût (documentation ST UM2884, §4.6). Au-delà de la période de mesure,
+    # le capteur réduirait de lui-même sa fréquence.
+    freq = config[CONF_RANGING_FREQUENCY]
+    period_ms = 1000 / freq
     integration = config[CONF_INTEGRATION_TIME].total_milliseconds
-    if integration >= period_ms:
+    if 4 * integration + 1 >= period_ms:
+        max_integration = int((period_ms - 1) / 4 - 0.001)
         raise cv.Invalid(
-            f"{CONF_INTEGRATION_TIME} ({integration:.0f} ms) doit être inférieur à la "
-            f"période de mesure ({period_ms:.0f} ms à {config[CONF_RANGING_FREQUENCY]} Hz)"
+            f"{CONF_INTEGRATION_TIME} trop long : en 8×8, le capteur émet 4 × {integration:.0f} ms "
+            f"+ 1 ms par image, soit plus que la période de {period_ms:.0f} ms à {freq} Hz. "
+            f"Maximum à {freq} Hz : {max_integration} ms (ou baisser {CONF_RANGING_FREQUENCY})."
         )
     return config
 
