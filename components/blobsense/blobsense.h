@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
@@ -18,6 +19,16 @@ namespace blobsense {
 
 static constexpr uint8_t GRID = 8;
 static constexpr uint8_t ZONES = GRID * GRID;
+
+// Capteur de distance brute d'une zone (tests, mesure de distance simple).
+struct DistanceSensor {
+  sensor::Sensor *sensor;
+  uint8_t zone;
+  uint32_t interval_ms;
+  uint32_t sum{0};
+  uint16_t count{0};
+  uint32_t last_publish_ms{0};
+};
 
 class BlobSenseComponent : public Component, public i2c::I2CDevice {
  public:
@@ -44,6 +55,9 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   // --- Entités ---
   void set_installation_height_sensor(sensor::Sensor *s) { this->installation_height_sensor_ = s; }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *s) { this->motion_binary_sensor_ = s; }
+  void add_distance_sensor(sensor::Sensor *s, uint8_t zone, uint32_t interval_ms) {
+    this->distance_sensors_.push_back(DistanceSensor{s, zone, interval_ms});
+  }
 
   // --- Commandes (numbers, switches, buttons) ---
   void set_min_height(float cm) { this->min_height_mm_ = cm * 10.0f; }
@@ -66,6 +80,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void update_installation_height_();
   void detect_(uint32_t now);
   void set_motion_(bool motion);
+  void update_distance_sensors_(uint32_t now);
   bool in_band_(uint8_t row, uint8_t col) const;
   void log_matrix_();
   void log_background_();
@@ -130,6 +145,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
 
   sensor::Sensor *installation_height_sensor_{nullptr};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
+  std::vector<DistanceSensor> distance_sensors_;
 };
 
 }  // namespace blobsense

@@ -49,6 +49,7 @@ en **blobs** et compte ceux qui traversent une **bande centrale**.
 | Compteur A / compteur B | Compteurs de passage en miroir, bornés à **±999** |
 | Remise à zéro | Un bouton par compteur |
 | Soustraire X | Action Home Assistant qui retire une valeur à un compteur sans risquer de perdre un passage en cours |
+| Distance brute | Distance mesurée par une zone choisie (zone centrale par défaut), pour les essais ou pour utiliser le capteur comme simple télémètre |
 | Protection | Calibration du verre de protection (crosstalk) |
 | Lecture active | Switch qui met le capteur en veille et arrête la lecture I2C, piloté par exemple par Home Assistant |
 | Debug | Visualisation optionnelle de la matrice 8×8 dans les logs |
@@ -149,6 +150,7 @@ démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 | Type | Entité | Notes |
 |---|---|---|
 | `sensor` | Hauteur d'installation | cm |
+| `sensor` | Distance | mm, distance brute d'une zone, moyennée sur `update_interval` |
 | `sensor` | Personnes présentes | Estimation |
 | `sensor` | Compteur A | −999 … 999 |
 | `sensor` | Compteur B | −999 … 999 |
@@ -207,6 +209,10 @@ sensor:
     blobsense_id: porte_salon
     installation_height:
       name: "Hauteur d'installation"
+    distance:               # distance brute d'une zone (essais, télémètre)
+      name: "Distance centre"
+      zone: 27              # 0 à 63 (ligne × 8 + colonne), 27 par défaut
+      update_interval: 1s   # moyenne des mesures valides sur cet intervalle
     # ⏳ people_count, counter_a, counter_b
 
 binary_sensor:
@@ -383,7 +389,34 @@ n'est envoyé dans la base de données de Home Assistant.
 5. ⏳ **Protection** : calibration du crosstalk et sauvegarde en flash.
 6. ⏳ **Réglages sur site et documentation** : exemples Home Assistant.
 
-## Premiers essais (étape 1)
+## Essais sur un bureau
+
+Le capteur **Distance** permet de tester le capteur sans l'installer :
+[`examples/blobsense-test-bureau.yaml`](examples/blobsense-test-bureau.yaml).
+
+- Il publie la distance mesurée par **une zone** (par défaut la zone 27, l'une
+  des 4 zones centrales), en millimètres.
+- La valeur publiée est la **moyenne des mesures valides** sur
+  `update_interval` (1 s par défaut). Cela lisse le bruit sans saturer Home
+  Assistant avec 15 valeurs par seconde.
+- S'il n'y a aucune mesure valide sur l'intervalle (rien dans la portée), la
+  valeur est **inconnue**.
+- Il est indépendant de la carte de fond, des hauteurs min/max et de la
+  hauteur d'installation.
+- On peut en déclarer plusieurs, chacun sur une zone différente, avec
+  plusieurs blocs `- platform: blobsense`.
+
+Numérotation des zones : `zone = ligne × 8 + colonne`, de 0 à 63. Les 4 zones
+centrales sont 27, 28, 35 et 36.
+
+Protocole conseillé pour comparer avec et sans protection : pointer le
+capteur vers un mur ou le plafond, placer une cible plane (main, carton) à
+des distances connues (par exemple 20, 50, 100, 150, 200 cm), noter la
+valeur après quelques secondes, puis recommencer avec la protection. La zone
+centrale ne voit qu'un cône d'environ 5,6° : à 1 m, elle couvre un carré
+d'environ 10 cm de côté, la cible doit donc bien être dans l'axe.
+
+## Premiers essais en place (étape 1)
 
 1. Flasher l'exemple, capteur installé et **passage vide**.
 2. Après ~10 s, la carte de fond initiale est apprise et la hauteur

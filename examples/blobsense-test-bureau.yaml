@@ -1,0 +1,67 @@
+# Essais sur un bureau : distance brute mesurée par une zone centrale.
+# Pointer le capteur vers un mur ou le plafond, puis placer la main ou un
+# carton à des distances connues et comparer avec la valeur affichée,
+# avec et sans protection.
+# Câblage : SDA=GPIO4, SCL=GPIO5, INT=GPIO6, LPn=GPIO7, alimentation 3,3 V.
+
+esphome:
+  name: blobsense-test
+  friendly_name: BlobSense test
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+api:
+
+ota:
+  - platform: esphome
+
+external_components:
+  - source: github://ev0000/BlobSense
+    components: [blobsense]
+
+i2c:
+  sda: GPIO4
+  scl: GPIO5
+  frequency: 400kHz
+
+blobsense:
+  id: capteur
+  int_pin:
+    number: GPIO6
+    mode:
+      input: true
+      pullup: true
+  lpn_pin: GPIO7
+
+sensor:
+  # Distance d'une zone centrale (zone 27 = ligne 3, colonne 3), moyennée sur 1 s.
+  - platform: blobsense
+    blobsense_id: capteur
+    distance:
+      name: "Distance centre"
+      zone: 27
+      update_interval: 1s
+  # Facultatif : une deuxième zone, par exemple dans un coin de la matrice.
+  # - platform: blobsense
+  #   blobsense_id: capteur
+  #   distance:
+  #     name: "Distance coin"
+  #     zone: 0
+
+switch:
+  - platform: blobsense
+    blobsense_id: capteur
+    active:
+      name: "Lecture active"
+    debug_matrix:
+      name: "Debug matrice"
