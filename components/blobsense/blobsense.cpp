@@ -53,6 +53,10 @@ void BlobSenseComponent::setup() {
     this->lpn_pin_->setup();
     this->lpn_pin_->digital_write(true);
   }
+  if (this->i2c_rst_pin_ != nullptr) {
+    this->i2c_rst_pin_->setup();
+    this->i2c_rst_pin_->digital_write(false);
+  }
   if (this->int_pin_ != nullptr) {
     this->int_pin_->setup();
     this->int_pin_->attach_interrupt(&BlobSenseComponent::gpio_intr, this, gpio::INTERRUPT_FALLING_EDGE);
@@ -85,6 +89,7 @@ void BlobSenseComponent::dump_config() {
   LOG_I2C_DEVICE(this);
   LOG_PIN("  Broche INT: ", this->int_pin_);
   LOG_PIN("  Broche LPn: ", this->lpn_pin_);
+  LOG_PIN("  Broche I2C_RST: ", this->i2c_rst_pin_);
   ESP_LOGCONFIG(TAG,
                 "  Fréquence: %u Hz, intégration: %u ms (mode autonomous)\n"
                 "  Fenêtre de fond: %" PRIu32 " s, fenêtre de démarrage: %" PRIu32 " s, marge: %u mm\n"
@@ -148,8 +153,9 @@ bool BlobSenseComponent::init_sensor_() {
   this->sensor_ok_ = false;
   this->ranging_ = false;
 
-  if (this->lpn_pin_ != nullptr)
-    this->platform_reset();
+  // Remise à zéro matérielle si LPn et/ou I2C_RST sont câblées : permet de
+  // récupérer un capteur bloqué sans couper son alimentation.
+  this->platform_reset();
 
   // 1. Le capteur répond-il sur le bus ?
   const i2c::ErrorCode probe = this->write(nullptr, 0);
@@ -545,12 +551,21 @@ uint8_t BlobSenseComponent::platform_write(uint16_t reg, const uint8_t *data, ui
 }
 
 uint8_t BlobSenseComponent::platform_reset() {
-  if (this->lpn_pin_ == nullptr)
+  if (this->lpn_pin_ == nullptr && this->i2c_rst_pin_ == nullptr)
     return VL53L5CX_STATUS_ERROR;
-  this->lpn_pin_->digital_write(false);
-  delay(100);
-  this->lpn_pin_->digital_write(true);
-  delay(100);
+  if (this->i2c_rst_pin_ != nullptr) {
+    // I2C_RST (actif à l'état haut) : réinitialise l'interface I2C du capteur.
+    this->i2c_rst_pin_->digital_write(true);
+    delay(10);
+    this->i2c_rst_pin_->digital_write(false);
+    delay(10);
+  }
+  if (this->lpn_pin_ != nullptr) {
+    this->lpn_pin_->digital_write(false);
+    delay(100);
+    this->lpn_pin_->digital_write(true);
+    delay(100);
+  }
   return VL53L5CX_STATUS_OK;
 }
 

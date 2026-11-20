@@ -192,6 +192,7 @@ blobsense:
       input: true
       pullup: true          # INT est en drain ouvert
   lpn_pin: GPIO7            # recommandé : broche LPn (redémarrage du capteur)
+  i2c_rst_pin: GPIO10       # recommandé : broche I2C_RST (déblocage de l'I2C)
   # Options et valeurs par défaut :
   # ranging_frequency: 15     # Hz (1 à 15)
   # integration_time: 10ms    # temps d'émission du laser par image (mode autonomous)
@@ -295,7 +296,9 @@ Des exemples d'automatisations seront fournis dans `examples/`.
 | ESP32-C3 | Éviter les broches de strapping (GPIO2, 8 et 9) pour INT et LPn |
 | VL53L5CX (module générique) | Vérifier la tension d'alimentation (régulateur 3,3 V ou non) et la présence des pull-up I2C |
 | INT | Recommandée : le capteur signale lui-même qu'une image est prête, sans interrogation en boucle de l'I2C |
-| LPn | Recommandée : permet de redémarrer le capteur matériellement s'il se bloque |
+| LPn | **Ne doit jamais rester en l'air** : à relier à une GPIO (`lpn_pin`, recommandé) ou à défaut au 3,3 V. Avec une GPIO, le composant peut redémarrer le capteur s'il se bloque |
+| I2C_RST | **Ne doit jamais rester en l'air** : à relier à une GPIO (`i2c_rst_pin`, recommandé) ou à défaut à GND. Actif à l'état haut, il réinitialise l'interface I2C du capteur |
+| PWREN | Sur certains modules : à relier au 3,3 V |
 | I2C | 400 kHz conseillé (l'ESP32-C3 monte à 800 kHz au maximum). Le firmware du capteur (~84 Ko) est envoyé à chaque démarrage, ce qui prend environ 2 s |
 
 **Montage** : capteur à l'horizontale, centré dans le passage, en haut de

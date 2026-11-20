@@ -41,6 +41,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   // --- Configuration (YAML) ---
   void set_int_pin(InternalGPIOPin *pin) { this->int_pin_ = pin; }
   void set_lpn_pin(GPIOPin *pin) { this->lpn_pin_ = pin; }
+  void set_i2c_rst_pin(GPIOPin *pin) { this->i2c_rst_pin_ = pin; }
   void set_ranging_frequency(uint8_t hz) { this->ranging_frequency_ = hz; }
   void set_integration_time(uint16_t ms) { this->integration_time_ = ms; }
   void set_background_window(uint32_t ms) { this->background_window_ = ms; }
@@ -91,6 +92,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   // Matériel
   InternalGPIOPin *int_pin_{nullptr};
   GPIOPin *lpn_pin_{nullptr};
+  GPIOPin *i2c_rst_pin_{nullptr};
   volatile bool data_ready_{false};
 
   // Driver ST

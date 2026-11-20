@@ -2,7 +2,7 @@
 # Pointer le capteur vers un mur ou le plafond, puis placer la main ou un
 # carton à des distances connues et comparer avec la valeur affichée,
 # avec et sans protection.
-# Câblage : SDA=GPIO4, SCL=GPIO5, INT=GPIO6, LPn=GPIO7, alimentation 3,3 V.
+# Câblage : SDA=GPIO4, SCL=GPIO5, INT=GPIO6, LPn=GPIO7, I2C_RST=GPIO10, alimentation 3,3 V.
 
 esphome:
   name: blobsense-test
@@ -42,6 +42,7 @@ blobsense:
       input: true
       pullup: true
   lpn_pin: GPIO7
+  i2c_rst_pin: GPIO10
 
 sensor:
   # Distance d'une zone centrale (zone 27 = ligne 3, colonne 3), moyennée sur 1 s.

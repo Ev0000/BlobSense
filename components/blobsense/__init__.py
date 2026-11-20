@@ -14,6 +14,7 @@ MULTI_CONF = True
 CONF_BLOBSENSE_ID = "blobsense_id"
 CONF_INT_PIN = "int_pin"
 CONF_LPN_PIN = "lpn_pin"
+CONF_I2C_RST_PIN = "i2c_rst_pin"
 CONF_RANGING_FREQUENCY = "ranging_frequency"
 CONF_INTEGRATION_TIME = "integration_time"
 CONF_BACKGROUND_WINDOW = "background_window"
@@ -48,6 +49,7 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(): cv.declare_id(BlobSenseComponent),
             cv.Optional(CONF_INT_PIN): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_LPN_PIN): pins.gpio_output_pin_schema,
+            cv.Optional(CONF_I2C_RST_PIN): pins.gpio_output_pin_schema,
             cv.Optional(CONF_RANGING_FREQUENCY, default=15): cv.int_range(min=1, max=15),
             cv.Optional(
                 CONF_INTEGRATION_TIME, default="10ms"
@@ -95,6 +97,9 @@ async def to_code(config):
     if CONF_LPN_PIN in config:
         pin = await cg.gpio_pin_expression(config[CONF_LPN_PIN])
         cg.add(var.set_lpn_pin(pin))
+    if CONF_I2C_RST_PIN in config:
+        pin = await cg.gpio_pin_expression(config[CONF_I2C_RST_PIN])
+        cg.add(var.set_i2c_rst_pin(pin))
 
     cg.add(var.set_ranging_frequency(config[CONF_RANGING_FREQUENCY]))
     cg.add(var.set_integration_time(config[CONF_INTEGRATION_TIME].total_milliseconds))
