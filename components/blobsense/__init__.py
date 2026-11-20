@@ -1,6 +1,6 @@
 """BlobSense : comptage de passages par suivi de blobs avec un VL53L5CX."""
 
-from esphome import pins
+from esphome import automation, pins
 import esphome.codegen as cg
 from esphome.components import i2c
 import esphome.config_validation as cv
@@ -31,6 +31,10 @@ blobsense_ns = cg.esphome_ns.namespace("blobsense")
 BlobSenseComponent = blobsense_ns.class_(
     "BlobSenseComponent", cg.Component, i2c.I2CDevice
 )
+SubtractAction = blobsense_ns.class_("SubtractAction", automation.Action)
+
+CONF_COUNTER = "counter"
+CONF_VALUE = "value"
 
 
 def _validate(config):
@@ -116,3 +120,33 @@ async def to_code(config):
     cg.add(var.set_invert(config[CONF_INVERT]))
     cg.add(var.set_band_width(config[CONF_BAND_WIDTH]))
     cg.add(var.set_peak_prominence(int(round(config[CONF_PEAK_PROMINENCE] * 1000))))
+
+
+SUBTRACT_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.use_id(BlobSenseComponent),
+        cv.Required(CONF_COUNTER): cv.templatable(cv.one_of("a", "b", lower=True)),
+        cv.Required(CONF_VALUE): cv.templatable(cv.int_range(min=-1998, max=1998)),
+    }
+)
+
+
+async def subtract_to_code(config, action_id, template_arg, args):
+    var = cg.new_Pvariable(action_id, template_arg)
+    await cg.register_parented(var, config[CONF_ID])
+    counter = await cg.templatable(config[CONF_COUNTER], args, cg.std_string)
+    cg.add(var.set_counter(counter))
+    value = await cg.templatable(config[CONF_VALUE], args, cg.int32)
+    cg.add(var.set_value(value))
+    return var
+
+
+# Le paramètre « synchronous » n'existe que dans les versions récentes d'ESPHome.
+try:
+    automation.register_action(
+        "blobsense.subtract", SubtractAction, SUBTRACT_SCHEMA, synchronous=True
+    )(subtract_to_code)
+except TypeError:
+    automation.register_action("blobsense.subtract", SubtractAction, SUBTRACT_SCHEMA)(
+        subtract_to_code
+    )

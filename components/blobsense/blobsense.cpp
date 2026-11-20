@@ -26,6 +26,8 @@ static constexpr uint32_t FRAME_GAP_MS = 1000;
 static constexpr uint8_t MAX_ERRORS = 10;
 // Taille des transferts I2C (le bus ESP-IDF d'ESPHome a un timeout de 100 ms par transaction).
 static constexpr uint32_t I2C_CHUNK = 256;
+// Bornes des compteurs de passage.
+static constexpr int32_t COUNTER_LIMIT = 999;
 // Délai entre deux tentatives d'initialisation.
 static constexpr uint32_t INIT_RETRY_MS = 10000;
 // Période d'affichage de la matrice de debug.
@@ -74,6 +76,7 @@ void BlobSenseComponent::setup() {
   this->dev_.platform.address = VL53L5CX_DEFAULT_I2C_ADDRESS;
 
   this->set_motion_(false);
+  this->publish_counters_();
   if (!this->init_sensor_())
     this->schedule_init_retry_();
 }
@@ -114,6 +117,8 @@ void BlobSenseComponent::dump_config() {
   }
   LOG_SENSOR("  ", "Hauteur d'installation", this->installation_height_sensor_);
   LOG_SENSOR("  ", "Personnes présentes", this->people_count_sensor_);
+  LOG_SENSOR("  ", "Compteur A", this->counter_a_sensor_);
+  LOG_SENSOR("  ", "Compteur B", this->counter_b_sensor_);
   LOG_BINARY_SENSOR("  ", "Mouvement", this->motion_binary_sensor_);
   for (const auto &ds : this->distance_sensors_) {
     LOG_SENSOR("  ", "Distance", ds.sensor);
@@ -459,10 +464,16 @@ void BlobSenseComponent::track_(uint64_t active) {
 
   const uint8_t ab = this->tracker_.crossings_ab();
   const uint8_t ba = this->tracker_.crossings_ba();
-  if (ab > 0)
-    ESP_LOGI(TAG, "Passage A → B (%u personne%s)", ab, ab > 1 ? "s" : "");
-  if (ba > 0)
-    ESP_LOGI(TAG, "Passage B → A (%u personne%s)", ba, ba > 1 ? "s" : "");
+  if (ab > 0 || ba > 0) {
+    // Un passage de A vers B retire une personne au côté A et en ajoute une au côté B.
+    this->add_to_counters_(static_cast<int32_t>(ba) - ab, static_cast<int32_t>(ab) - ba);
+    if (ab > 0)
+      ESP_LOGI(TAG, "Passage A → B (%u personne%s) : compteurs A=%d, B=%d", ab, ab > 1 ? "s" : "", this->counter_a_,
+               this->counter_b_);
+    if (ba > 0)
+      ESP_LOGI(TAG, "Passage B → A (%u personne%s) : compteurs A=%d, B=%d", ba, ba > 1 ? "s" : "", this->counter_a_,
+               this->counter_b_);
+  }
 
   const int16_t people = this->tracker_.people_count();
   if (people != this->people_published_) {
@@ -470,6 +481,49 @@ void BlobSenseComponent::track_(uint64_t active) {
     if (this->people_count_sensor_ != nullptr)
       this->people_count_sensor_->publish_state(people);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Compteurs
+// ---------------------------------------------------------------------------
+
+static int16_t clamp_counter(int32_t value) {
+  if (value > COUNTER_LIMIT)
+    return COUNTER_LIMIT;
+  if (value < -COUNTER_LIMIT)
+    return -COUNTER_LIMIT;
+  return static_cast<int16_t>(value);
+}
+
+void BlobSenseComponent::add_to_counters_(int32_t delta_a, int32_t delta_b) {
+  this->counter_a_ = clamp_counter(static_cast<int32_t>(this->counter_a_) + delta_a);
+  this->counter_b_ = clamp_counter(static_cast<int32_t>(this->counter_b_) + delta_b);
+  this->publish_counters_();
+}
+
+void BlobSenseComponent::publish_counters_() {
+  if (this->counter_a_sensor_ != nullptr &&
+      (!this->counter_a_sensor_->has_state() || this->counter_a_sensor_->state != this->counter_a_))
+    this->counter_a_sensor_->publish_state(this->counter_a_);
+  if (this->counter_b_sensor_ != nullptr &&
+      (!this->counter_b_sensor_->has_state() || this->counter_b_sensor_->state != this->counter_b_))
+    this->counter_b_sensor_->publish_state(this->counter_b_);
+}
+
+void BlobSenseComponent::reset_counter(bool b) {
+  ESP_LOGI(TAG, "Remise à zéro du compteur %c", b ? 'B' : 'A');
+  (b ? this->counter_b_ : this->counter_a_) = 0;
+  this->publish_counters_();
+}
+
+// Retire `value` au compteur. Home Assistant envoie la valeur qu'il vient de
+// lire : un passage survenu entre la lecture et la soustraction est conservé,
+// contrairement à une remise à zéro.
+void BlobSenseComponent::subtract(bool b, int32_t value) {
+  int16_t &counter = b ? this->counter_b_ : this->counter_a_;
+  counter = clamp_counter(static_cast<int32_t>(counter) - value);
+  ESP_LOGI(TAG, "Compteur %c : %d soustrait, nouvelle valeur %d", b ? 'B' : 'A', (int) value, counter);
+  this->publish_counters_();
 }
 
 void BlobSenseComponent::reset_tracking_() {

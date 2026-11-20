@@ -15,6 +15,8 @@ from . import CONF_BLOBSENSE_ID, BlobSenseComponent
 
 CONF_INSTALLATION_HEIGHT = "installation_height"
 CONF_PEOPLE_COUNT = "people_count"
+CONF_COUNTER_A = "counter_a"
+CONF_COUNTER_B = "counter_b"
 CONF_ZONE = "zone"
 
 CONFIG_SCHEMA = cv.Schema(
@@ -32,6 +34,16 @@ CONFIG_SCHEMA = cv.Schema(
             accuracy_decimals=0,
             state_class=STATE_CLASS_MEASUREMENT,
             icon="mdi:account-group",
+        ),
+        cv.Optional(CONF_COUNTER_A): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            icon="mdi:counter",
+        ),
+        cv.Optional(CONF_COUNTER_B): sensor.sensor_schema(
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            icon="mdi:counter",
         ),
         # Distance brute d'une zone (par défaut la zone 27, au centre de la
         # matrice), moyennée sur update_interval. Pour les essais et la mesure
@@ -63,6 +75,12 @@ async def to_code(config):
     if conf := config.get(CONF_PEOPLE_COUNT):
         sens = await sensor.new_sensor(conf)
         cg.add(hub.set_people_count_sensor(sens))
+    if conf := config.get(CONF_COUNTER_A):
+        sens = await sensor.new_sensor(conf)
+        cg.add(hub.set_counter_a_sensor(sens))
+    if conf := config.get(CONF_COUNTER_B):
+        sens = await sensor.new_sensor(conf)
+        cg.add(hub.set_counter_b_sensor(sens))
     if conf := config.get(CONF_DISTANCE):
         sens = await sensor.new_sensor(conf)
         cg.add(

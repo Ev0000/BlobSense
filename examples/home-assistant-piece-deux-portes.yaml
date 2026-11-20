@@ -1,0 +1,46 @@
+# Exemple Home Assistant : salon avec deux portes équipées de BlobSense.
+#
+#   - porte_1 : côté A = salon, côté B = couloir
+#   - porte_2 : côté A = cuisine, côté B = salon
+#
+# Les noms d'entités et d'actions dépendent du nom de vos appareils ESPHome :
+#   appareil « porte-1 », action « subtract » → action HA esphome.porte_1_subtract
+#
+# À placer dans configuration.yaml (ou dans un package).
+
+template:
+  - sensor:
+      # Occupation du salon = somme des compteurs côté salon de toutes ses portes.
+      - name: "Occupation salon"
+        unique_id: occupation_salon
+        state_class: measurement
+        state: >
+          {{ states('sensor.porte_1_compteur_a') | int(0)
+           + states('sensor.porte_2_compteur_b') | int(0) }}
+
+automation:
+  # Quand la somme revient à 0, on ramène les compteurs côté salon à 0.
+  # On SOUSTRAIT la valeur lue plutôt que de faire une remise à zéro : un
+  # passage qui survient pendant l'opération n'est pas perdu.
+  - alias: "Salon : recentrer les compteurs quand la somme vaut 0"
+    triggers:
+      - trigger: state
+        entity_id: sensor.occupation_salon
+        to: "0"
+    conditions:
+      - condition: template
+        value_template: >
+          {{ states('sensor.porte_1_compteur_a') | int(0) != 0
+             or states('sensor.porte_2_compteur_b') | int(0) != 0 }}
+    actions:
+      - variables:
+          porte_1: "{{ states('sensor.porte_1_compteur_a') | int(0) }}"
+          porte_2: "{{ states('sensor.porte_2_compteur_b') | int(0) }}"
+      - action: esphome.porte_1_subtract
+        data:
+          counter: "a"
+          value: "{{ porte_1 }}"
+      - action: esphome.porte_2_subtract
+        data:
+          counter: "b"
+          value: "{{ porte_2 }}"

@@ -93,7 +93,7 @@ class BlobSenseNumber : public number::Number, public Component, public Parented
 
 // --- Buttons ---
 
-enum class ButtonType : uint8_t { RECALIBRATE };
+enum class ButtonType : uint8_t { RECALIBRATE, RESET_A, RESET_B };
 
 class BlobSenseButton : public button::Button, public Parented<BlobSenseComponent> {
  public:
@@ -104,6 +104,12 @@ class BlobSenseButton : public button::Button, public Parented<BlobSenseComponen
     switch (this->type_) {
       case ButtonType::RECALIBRATE:
         this->parent_->recalibrate();
+        break;
+      case ButtonType::RESET_A:
+        this->parent_->reset_counter(false);
+        break;
+      case ButtonType::RESET_B:
+        this->parent_->reset_counter(true);
         break;
     }
   }

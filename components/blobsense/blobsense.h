@@ -60,6 +60,8 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void set_installation_height_sensor(sensor::Sensor *s) { this->installation_height_sensor_ = s; }
   void set_motion_binary_sensor(binary_sensor::BinarySensor *s) { this->motion_binary_sensor_ = s; }
   void set_people_count_sensor(sensor::Sensor *s) { this->people_count_sensor_ = s; }
+  void set_counter_a_sensor(sensor::Sensor *s) { this->counter_a_sensor_ = s; }
+  void set_counter_b_sensor(sensor::Sensor *s) { this->counter_b_sensor_ = s; }
   void add_distance_sensor(sensor::Sensor *s, uint8_t zone, uint32_t interval_ms) {
     this->distance_sensors_.push_back(DistanceSensor{s, zone, interval_ms});
   }
@@ -70,6 +72,11 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void set_active(bool active);
   void set_debug(bool debug) { this->debug_ = debug; }
   void recalibrate();
+  // Compteurs : remise à zéro et soustraction (b = false pour A, true pour B).
+  void reset_counter(bool b);
+  void subtract(bool b, int32_t value);
+  int16_t get_counter_a() const { return this->counter_a_; }
+  int16_t get_counter_b() const { return this->counter_b_; }
 
   // --- Accès I2C pour la couche plateforme du driver ST ---
   uint8_t platform_read(uint16_t reg, uint8_t *data, uint32_t len);
@@ -87,6 +94,8 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void detect_(uint32_t now);
   void set_motion_(bool motion);
   void track_(uint64_t active);
+  void add_to_counters_(int32_t delta_a, int32_t delta_b);
+  void publish_counters_();
   void reset_tracking_();
   void update_distance_sensors_(uint32_t now);
   bool in_band_(uint8_t row, uint8_t col) const;
@@ -139,6 +148,8 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   // Suivi des blobs et comptage
   BlobTracker tracker_;
   int16_t people_published_{-1};
+  int16_t counter_a_{0};
+  int16_t counter_b_{0};
   uint32_t last_frame_ms_{0};
 
   // Carte de fond adaptative
@@ -161,6 +172,8 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
 
   sensor::Sensor *installation_height_sensor_{nullptr};
   sensor::Sensor *people_count_sensor_{nullptr};
+  sensor::Sensor *counter_a_sensor_{nullptr};
+  sensor::Sensor *counter_b_sensor_{nullptr};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
   std::vector<DistanceSensor> distance_sensors_;
 };

@@ -4,12 +4,11 @@ Composant externe ESPHome (`external_components`) pour le capteur ToF multizone
 **ST VL53L5CX** sur **ESP32-C3** (framework **ESP-IDF**), destiné au **comptage
 de passages bidirectionnel** par suivi de blobs.
 
-> 🚧 **Statut : étape 2 en cours de test.** Le driver, la carte de fond
-> adaptative, la hauteur d'installation, le mouvement, la veille, le debug,
-> la détection et le suivi des blobs, l'estimation des personnes présentes et
-> la détection des passages (dans les logs) sont implémentés. Les compteurs
-> arrivent à l'étape 3. Les fonctions non encore disponibles sont signalées
-> par ⏳.
+> 🚧 **Statut : étape 3 en cours de test.** Mesure, carte de fond
+> adaptative, mouvement, suivi des blobs, personnes présentes, compteurs de
+> passage, remises à zéro et action `subtract` sont implémentés. Restent la
+> calibration du verre de protection et les mesures de consommation. Les
+> fonctions non encore disponibles sont signalées par ⏳.
 
 ---
 
@@ -156,7 +155,7 @@ depuis cette porte. Ils évoluent en miroir et sont bornés à ±999.
 Les compteurs **ne sont pas sauvegardés en flash** et repartent à 0 au
 démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 
-## Entités exposées (prévisionnel)
+## Entités exposées
 
 | Type | Entité | Notes |
 |---|---|---|
@@ -228,7 +227,10 @@ sensor:
       update_interval: 1s   # moyenne des mesures valides sur cet intervalle
     people_count:
       name: "Personnes présentes"
-    # ⏳ counter_a, counter_b
+    counter_a:              # variation d'occupation du côté A (−999 … 999)
+      name: "Compteur A"
+    counter_b:              # variation d'occupation du côté B (−999 … 999)
+      name: "Compteur B"
 
 binary_sensor:
   - platform: blobsense
@@ -259,20 +261,26 @@ button:
     blobsense_id: porte_salon
     recalibrate:
       name: "Recalibrer maintenant"
-    # ⏳ reset_a, reset_b, calibrate_cover
+    reset_a:
+      name: "RAZ compteur A"
+    reset_b:
+      name: "RAZ compteur B"
+    # ⏳ calibrate_cover
 
-# ⏳ Action blobsense.subtract (étape 3), par exemple via l'API :
-# api:
-#   actions:
-#     - action: subtract
-#       variables:
-#         counter: string   # "a" ou "b"
-#         value: int
-#       then:
-#         - blobsense.subtract:
-#             id: porte_salon
-#             counter: !lambda 'return counter;'
-#             value: !lambda 'return value;'
+# Action blobsense.subtract, ici exposée à Home Assistant via l'API
+# (action HA : esphome.<nom_appareil>_subtract). Elle peut aussi être appelée
+# depuis n'importe quelle automatisation ESPHome (bus CAN, etc.).
+api:
+  actions:
+    - action: subtract
+      variables:
+        counter: string   # "a" ou "b"
+        value: int
+      then:
+        - blobsense.subtract:
+            id: porte_salon
+            counter: !lambda 'return counter;'
+            value: !lambda 'return value;'
 ```
 
 Un exemple complet est disponible dans
@@ -301,7 +309,9 @@ L'action `blobsense.subtract` est une action ESPHome standard. Elle peut être
 exposée via `api` (comme dans l'exemple) ou déclenchée par tout autre moyen
 disponible dans le YAML.
 
-Des exemples d'automatisations seront fournis dans `examples/`.
+Un exemple complet (capteur d'occupation et automatisation de recentrage)
+est disponible dans
+[`examples/home-assistant-piece-deux-portes.yaml`](examples/home-assistant-piece-deux-portes.yaml).
 
 ## Matériel
 
@@ -435,10 +445,11 @@ n'est envoyé dans la base de données de Home Assistant.
    autonomous, carte de fond adaptative, hauteur d'installation, mouvement,
    hauteurs min/max, switch Lecture active, recalibration, debug de la
    matrice, capteur de distance brute.
-2. 🧪 **Blobs et suivi** (implémenté et testé en simulation, à tester sur le
-   matériel) : détection par sommets, pistes avec nombre de personnes, fusion
+2. ✅ **Blobs et suivi** (testé en simulation et sur le matériel, une
+   personne à la fois) : détection par sommets, pistes avec nombre de personnes, fusion
    et séparation, personnes présentes, passages dans les logs.
-3. ⏳ **Comptage** : compteurs, boutons de remise à zéro, action `subtract`.
+3. 🧪 **Comptage** (implémenté, à tester sur le matériel) : compteurs A/B en
+   miroir bornés à ±999, boutons de remise à zéro, action `subtract`.
 4. ⏳ **Consommation** : mesures réelles et réglage du temps d'intégration.
 5. ⏳ **Protection** : calibration du crosstalk et sauvegarde en flash.
 6. ⏳ **Réglages sur site et documentation** : exemples Home Assistant.
