@@ -976,6 +976,20 @@ void BlobSenseComponent::log_matrix_() {
     }
     ESP_LOGI(TAG, "  %u |%s|", row, line);
   }
+  // Répartition des statuts du capteur sur cette image (5 et 9 = mesure
+  // retenue ; 1/8 = signal trop faible ; 255 = aucune cible ; etc.).
+  uint8_t counts[256] = {0};
+  for (uint8_t z = 0; z < ZONES; z++) {
+    const uint8_t st = this->results_.nb_target_detected[z] > 0 ? this->results_.target_status[z] : 255;
+    counts[st]++;
+  }
+  char stats[160];
+  size_t pos = 0;
+  for (uint16_t st = 0; st < 256 && pos < sizeof(stats) - 12; st++) {
+    if (counts[st] > 0)
+      pos += snprintf(stats + pos, sizeof(stats) - pos, " %u:%u", st, counts[st]);
+  }
+  ESP_LOGI(TAG, "  Statuts (statut:zones) :%s", stats);
   for (uint8_t i = 0; i < this->tracker_.track_count(); i++) {
     const Track &t = this->tracker_.track(i);
     const char *side = t.side == Side::A ? "A" : (t.side == Side::B ? "B" : "bande");

@@ -559,8 +559,14 @@ seront à confirmer en conditions réelles.
 Quand le switch « Debug matrice » est actif, la matrice est affichée en ASCII
 dans les logs ESPHome deux fois par seconde : hauteurs des zones actives,
 bande centrale entre [ ], puis une ligne par piste (personnes, côtés
-d'origine, position, côté actuel). Les passages sont toujours écrits dans les
-logs, debug actif ou non : `Passage A → B (1 personne)`. Le coût en calcul est négligeable (formatage de 64 valeurs) et rien
+d'origine, position, côté actuel). Une ligne `Statuts` donne aussi la
+répartition des statuts du capteur sur l'image (`statut:zones`). Seuls 5
+(valide) et 9 (valide, impulsion large) sont retenus ; 1 et 8 signalent un
+signal trop faible (cible loin ou sombre, bord du champ, temps d'intégration
+court), 255 l'absence de cible, 3, 4, 7, 11 et 13 une mesure incohérente
+(lumière ambiante, surface en biais), 6 une première mesure non confirmée,
+12 une cible « floutée » par une voisine. Les passages sont toujours écrits
+dans les logs, debug actif ou non : `Passage A → B (1 personne)`. Le coût en calcul est négligeable (formatage de 64 valeurs) et rien
 n'est envoyé dans la base de données de Home Assistant.
 
 ## Feuille de route
