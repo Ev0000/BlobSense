@@ -483,6 +483,75 @@ avec toute autre solution choisie dans le YAML (par exemple un bus filaire
 vers un hub). Le CPU peut tourner à 80 MHz : le traitement d'une matrice 8×8 à
 15 Hz est très léger.
 
+### Temps d'intégration (`integration_time`)
+
+C'est la durée pendant laquelle le laser émet et le capteur collecte la
+lumière renvoyée, pour **une sous-mesure**. En 8×8, une image est faite de
+**4 sous-mesures** successives : le laser émet donc 4 × `integration_time`
+par image, puis s'éteint jusqu'à l'image suivante (mode autonomous).
+
+ST impose `4 × integration_time + 1 ms` inférieur à la période de mesure,
+sinon le capteur ralentit de lui-même. ESPHome refuse donc une combinaison
+incompatible :
+
+| Fréquence | Période | `integration_time` maximum |
+|---|---|---|
+| 15 Hz (défaut) | 66,7 ms | 16 ms |
+| 10 Hz | 100 ms | 24 ms |
+| 5 Hz | 200 ms | 49 ms |
+
+Le compromis :
+
+- **plus long** : plus de signal, donc plus de zones avec une mesure fiable
+  (cibles lointaines ou sombres, cheveux noirs) et moins de bruit, mais le
+  laser consomme plus ;
+- **plus court** : moins de consommation, mais davantage de zones sans
+  mesure, et un suivi moins fiable.
+
+La valeur par défaut, **10 ms**, est un bon compromis à 15 Hz. Au-delà, le
+gain en zones valides devient faible pour une consommation nettement plus
+élevée. Il vaut mieux garder 15 Hz que de baisser la fréquence pour
+allonger l'intégration : à 10 Hz, une personne rapide traverse la bande en
+moins d'images.
+
+**Choisir la valeur sur place, sans reflasher** : deux entités optionnelles
+servent à ce réglage.
+
+```yaml
+number:
+  - platform: blobsense
+    blobsense_id: porte_salon
+    integration_time:       # réglable à chaud depuis Home Assistant (ms)
+      name: "Temps d'intégration"
+
+sensor:
+  - platform: blobsense
+    blobsense_id: porte_salon
+    valid_zones:            # % de zones avec une mesure fiable (moyenne sur 10 s)
+      name: "Zones valides"
+```
+
+- **Temps d'intégration** (`number`) : change la valeur à chaud, sans
+  reflasher. Le maximum est calculé selon la fréquence (16 ms à 15 Hz). La
+  valeur choisie est conservée après redémarrage et **remplace**
+  `integration_time` du YAML, qui ne sert plus que de valeur initiale.
+- **Zones valides** (`sensor`) : la part des 64 zones dont la mesure est
+  fiable (statuts 5 et 9 du capteur), en moyenne sur 10 s.
+
+Méthode : comparer **Zones valides** pour quelques valeurs (par exemple 5,
+10 et 16 ms) et garder la plus courte au-delà de laquelle le gain devient
+faible. Le test le plus parlant se fait avec une surface **sombre et mate**
+(cas des cheveux noirs) placée à la distance de l'objet le plus lointain à
+détecter, soit `hauteur d'installation − hauteur min`. Le sol vu à vide
+compte moins : une zone de sol sans mesure est remplacée par la distance
+déduite de la hauteur d'installation. Seules les 4 zones centrales doivent
+voir le sol de façon fiable, puisque la hauteur d'installation est mesurée
+sur elles. Pour savoir pourquoi des zones sont invalides, la ligne
+`Statuts` du debug donne la répartition des statuts du capteur.
+
+Une fois la valeur trouvée, on peut la reporter dans `integration_time` du
+YAML et retirer les deux entités.
+
 ## Limites connues
 
 - Deux personnes qui entrent **déjà collées** et ne se séparent jamais sont
