@@ -106,6 +106,8 @@ enum class ButtonType : uint8_t {
   CALIBRATE_DIRECTION,
   CALIBRATE_COVER,
   CLEAR_COVER_CALIBRATION,
+  LEARN_DOOR_CLOSED,
+  CLEAR_DOOR,
 };
 
 class BlobSenseButton : public button::Button, public Parented<BlobSenseComponent> {
@@ -132,6 +134,12 @@ class BlobSenseButton : public button::Button, public Parented<BlobSenseComponen
         break;
       case ButtonType::CLEAR_COVER_CALIBRATION:
         this->parent_->clear_cover_calibration();
+        break;
+      case ButtonType::LEARN_DOOR_CLOSED:
+        this->parent_->learn_door_closed();
+        break;
+      case ButtonType::CLEAR_DOOR:
+        this->parent_->clear_door();
         break;
     }
   }

@@ -61,6 +61,11 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void change_integration_time(uint16_t ms);
   uint16_t max_integration_time() const { return (1000 / this->ranging_frequency_ - 1) / 4; }
   void set_valid_zones_sensor(sensor::Sensor *s) { this->valid_zones_sensor_ = s; }
+  // Porte : état déduit des mesures (on = ouverte, convention Home Assistant).
+  void set_door_binary_sensor(binary_sensor::BinarySensor *s) { this->door_binary_sensor_ = s; }
+  void learn_door_closed();
+  void clear_door();
+  bool is_door_closed() const { return this->door_closed_; }
   void set_background_window(uint32_t ms) { this->background_window_ = ms; }
   void set_startup_window(uint32_t ms) { this->startup_window_ = ms; }
   void set_background_margin(uint16_t mm) { this->background_margin_ = mm; }
@@ -147,6 +152,11 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   bool pause_ranging_();
   void resume_ranging_(bool was_ranging, bool relearn = true);
   void update_valid_zones_(uint32_t now);
+  void update_door_(uint32_t now);
+  void finish_door_learning_();
+  void publish_door_();
+  // Zone qui voit le battant alors que la porte est fermée : ignorée.
+  bool door_blocks_(uint8_t zone) const { return this->door_closed_ && ((this->door_mask_ >> zone) & 1ULL); }
   void update_distance_sensors_(uint32_t now);
   bool in_band_(uint8_t row, uint8_t col) const;
   void log_matrix_();
@@ -263,6 +273,27 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   text_sensor::TextSensor *orientation_text_sensor_{nullptr};
   text_sensor::TextSensor *cover_text_sensor_{nullptr};
   sensor::Sensor *valid_zones_sensor_{nullptr};
+  binary_sensor::BinarySensor *door_binary_sensor_{nullptr};
+
+  // Porte (apprise avec le bouton « Apprendre porte fermée »)
+  struct DoorPref {
+    uint32_t magic;
+    uint8_t edge;       // bord de la porte : 0 = ligne 0, 1 = ligne 7, 2 = colonne 0, 3 = colonne 7
+    uint16_t ref_mm;    // distance moyenne des 2 zones centrales de ce bord, porte fermée
+    uint64_t mask;      // zones qui voient le battant, porte fermée
+  };
+  bool door_learned_{false};
+  uint8_t door_edge_{0};
+  uint16_t door_ref_mm_{0};
+  uint64_t door_mask_{0};
+  bool door_closed_{false};
+  bool door_published_{false};
+  uint8_t door_streak_{0};
+  bool door_learning_{false};
+  uint32_t door_learning_end_ms_{0};
+  uint32_t door_sum_[ZONES]{};
+  uint16_t door_count_[ZONES]{};
+  ESPPreferenceObject door_pref_;
   uint32_t valid_zone_sum_{0};
   uint32_t valid_frame_count_{0};
   uint32_t valid_last_publish_ms_{0};

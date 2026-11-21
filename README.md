@@ -181,6 +181,9 @@ démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 | `sensor` | Compteur A | −999 … 999 |
 | `sensor` | Compteur B | −999 … 999 |
 | `binary_sensor` | Mouvement | |
+| `binary_sensor` | Porte | `on` = ouverte, `off` = fermée (classe `door`), après apprentissage |
+| `button` | Apprendre porte fermée | Repère le battant, porte fermée |
+| `button` | Effacer l'apprentissage porte | |
 | `number` | Hauteur min | cm, valeur conservée après redémarrage |
 | `number` | Hauteur max | cm, valeur conservée après redémarrage |
 | `number` | Temps d'intégration | ms, réglable à chaud, borné selon la fréquence, valeur conservée après redémarrage |
@@ -270,6 +273,8 @@ binary_sensor:
     blobsense_id: porte_salon
     motion:
       name: "Mouvement"
+    door:                   # état de la porte déduit des mesures (après apprentissage)
+      name: "Porte"
 
 number:
   - platform: blobsense
@@ -302,6 +307,10 @@ button:
       name: "RAZ compteur A"
     reset_b:
       name: "RAZ compteur B"
+    learn_door_closed:
+      name: "Apprendre porte fermée"
+    clear_door:
+      name: "Effacer l'apprentissage porte"
     calibrate_cover:
       name: "Calibrer la protection"
     clear_cover_calibration:
@@ -435,6 +444,47 @@ sont plus souvent vues comme un seul blob.
   lentement de A vers B, puis choisir `axis: y` si les zones actives avancent
   de ligne en ligne ou `axis: x` si elles avancent de colonne en colonne, et
   `invert` selon le sens des messages `Passage`.
+
+### Porte
+
+Le capteur est dans l'encadrement : d'un côté, il y a souvent une porte.
+Fermée, son battant est vu par la moitié de la matrice, à des hauteurs de
+1 à 2 m environ. C'est dans la plage de détection : sans précaution, le
+battant passerait pour une personne pendant quelques minutes (mouvement à on,
+« Personnes présentes » à 1). Et après une longue fermeture, la carte de fond
+finirait par « devenir » la porte : à la réouverture, cette moitié de matrice
+serait aveugle aux personnes pendant plusieurs minutes.
+
+BlobSense peut **détecter lui-même la porte**, sans capteur supplémentaire :
+
+1. **Apprentissage** : porte **fermée**, passage vide, appuyer sur
+   **Apprendre porte fermée**. Pendant 2 s, le composant mesure les 2 zones
+   centrales de chaque bord de la matrice (ligne 0, ligne 7, colonne 0,
+   colonne 7), soit 8 zones. Il les compare à la carte de fond : le bord
+   nettement plus proche que le fond (de plus de 20 cm) est celui de la
+   porte, et la moyenne de ses 2 zones devient la **distance de référence**.
+   Il note aussi toutes les zones qui voient le battant. Le résultat est
+   sauvegardé en flash (une écriture par apprentissage) et le détail est
+   écrit dans les logs.
+2. **Détection** : la porte est **fermée** tant que la moyenne des 2 zones de
+   son bord reste à ± 8 cm de la référence, avec un anti-rebond d'environ
+   0,5 s. Le capteur **Porte** publie l'état (`on` = ouverte).
+3. **Quand la porte est fermée**, les zones qui voient le battant sont
+   **ignorées** pour la détection, et elles n'alimentent plus la carte de
+   fond ni l'historique des distances. Le battant n'est donc jamais pris
+   pour une personne, et le fond reste celui de la porte ouverte.
+4. À chaque changement d'état, les pistes en cours sont abandonnées, puisque
+   le battant a bougé.
+
+Conditions de l'apprentissage : la carte de fond doit déjà être apprise, et
+la porte doit avoir été **ouverte dans les dernières minutes** (la fenêtre de
+fond). Sinon, le fond a déjà intégré le battant et aucun bord ne ressort. Si
+l'apprentissage échoue, les logs donnent l'écart mesuré pour chaque bord.
+
+Limite : une tête très haute placée exactement sous le bord de la porte,
+porte ouverte, pourrait être confondue avec le battant fermé. Le cas est peu
+probable, car le haut du battant est en général bien plus près du capteur
+qu'une tête. L'anti-rebond limite aussi ce risque.
 
 ### Protection (verre ou « lunettes »)
 
