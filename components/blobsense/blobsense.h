@@ -12,10 +12,7 @@
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/preferences.h"
 
-extern "C" {
-#include "vl53l5cx_api.h"
-#include "vl53l5cx_plugin_xtalk.h"
-}
+#include "vl53_driver.h"
 
 #include "tracker.h"
 
@@ -164,8 +161,8 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   volatile bool data_ready_{false};
 
   // Driver ST
-  VL53L5CX_Configuration dev_{};
-  VL53L5CX_ResultsData results_{};
+  VLX_Configuration dev_{};
+  VLX_ResultsData results_{};
   bool sensor_ok_{false};
   bool ranging_{false};
   uint8_t error_count_{0};
@@ -202,7 +199,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   // Calibration de la protection
   struct CoverPref {
     uint32_t magic;
-    uint8_t data[VL53L5CX_XTALK_BUFFER_SIZE];
+    uint8_t data[VLX_C(XTALK_BUFFER_SIZE)];
   };
   uint16_t cover_distance_mm_{600};
   bool cover_use_floor_{false};

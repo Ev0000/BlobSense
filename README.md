@@ -1,8 +1,9 @@
 # BlobSense
 
-Composant externe ESPHome (`external_components`) pour le capteur ToF multizone
-**ST VL53L5CX** sur **ESP32-C3** (framework **ESP-IDF**), destiné au **comptage
-de passages bidirectionnel** par suivi de blobs.
+Composant externe ESPHome (`external_components`) pour les capteurs ToF
+multizone **ST VL53L5CX** et **ST VL53L8CX** sur **ESP32-C3** (framework
+**ESP-IDF**), destiné au **comptage de passages bidirectionnel** par suivi de
+blobs.
 
 > 🚧 **Statut : en test.** Mesure, carte de fond adaptative, mouvement,
 > suivi des blobs, personnes présentes, compteurs de passage, remises à zéro,
@@ -215,6 +216,7 @@ i2c:
 
 blobsense:
   id: porte_salon
+  model: vl53l5cx           # vl53l5cx (défaut) ou vl53l8cx
   int_pin:                  # recommandé : broche INT (image prête)
     number: GPIO6
     mode:
@@ -360,6 +362,25 @@ est disponible dans
 [`examples/home-assistant-piece-deux-portes.yaml`](examples/home-assistant-piece-deux-portes.yaml).
 
 ## Matériel
+
+### Modèles pris en charge
+
+| Modèle | Option | Remarques |
+|---|---|---|
+| VL53L5CX | `model: vl53l5cx` (défaut) | Testé |
+| VL53L8CX | `model: vl53l8cx` | Successeur du VL53L5CX : même matrice 8×8, même champ de 45° × 45°, meilleure tenue à la lumière ambiante. Pris en charge, compilé, à confirmer sur le matériel |
+
+Le fonctionnement est identique pour les deux modèles : seul le driver ST
+compilé change. Un seul driver est embarqué dans le firmware, celui du modèle
+choisi. Tous les capteurs `blobsense` d'un même appareil doivent donc être du
+même modèle. Si le modèle branché ne correspond pas à l'option `model`, le
+diagnostic au démarrage l'indique (par exemple « un VL53L8CX est branché :
+mettre « model: vl53l8cx » »).
+
+Sur les modules VL53L8CX qui proposent l'I2C et le SPI, vérifier que la
+broche de sélection (souvent `SPI_I2C_N`) choisit bien l'**I2C**.
+
+### Câblage
 
 | Élément | Remarque |
 |---|---|
@@ -659,9 +680,14 @@ possible quelques matrices de debug.
 
 Voir [LICENSE](LICENSE).
 
-Le composant embarque le driver **ST VL53L5CX Ultra Lite Driver (ULD)**
-v1.3.0 (`vl53l5cx_api.c`, `vl53l5cx_api.h`, `vl53l5cx_buffers.h`,
-`vl53l5cx_plugin_xtalk.c`, `vl53l5cx_plugin_xtalk.h`), © 2020
-STMicroelectronics, distribué ici sous licence **BSD 3-clause**, l'une des
-deux licences proposées par ST dans l'en-tête de ces fichiers. Les fichiers
-sont repris sans modification.
+Le composant embarque les drivers ST suivants, repris sans modification :
+
+- **VL53L5CX Ultra Lite Driver (ULD)** v1.3.0 (`vl53l5cx_api.c`,
+  `vl53l5cx_api.h`, `vl53l5cx_buffers.h`, `vl53l5cx_plugin_xtalk.c`,
+  `vl53l5cx_plugin_xtalk.h`), © 2020 STMicroelectronics, distribué ici sous
+  licence **BSD 3-clause**, l'une des deux licences proposées par ST dans
+  l'en-tête de ces fichiers ;
+- **VL53L8CX Ultra Lite Driver (ULD)** v1.2.1 (`vl53l8cx_api.c`,
+  `vl53l8cx_api.h`, `vl53l8cx_buffers.h`, `vl53l8cx_plugin_xtalk.c`,
+  `vl53l8cx_plugin_xtalk.h`), © STMicroelectronics, distribué sous licence
+  **BSD 3-clause**.

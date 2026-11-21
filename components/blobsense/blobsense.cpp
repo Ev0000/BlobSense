@@ -13,7 +13,7 @@ namespace blobsense {
 
 static const char *const TAG = "blobsense";
 
-// Champ de vision du VL53L5CX : environ 45° sur chaque axe, découpé en 8 zones.
+// Champ de vision du VL53L5CX / VL53L8CX : environ 45° sur chaque axe, découpé en 8 zones.
 static constexpr float ZONE_ANGLE_DEG = 45.0f / GRID;
 // Zones centrales utilisées pour la hauteur d'installation.
 static constexpr uint8_t CENTER_ZONES[4] = {27, 28, 35, 36};
@@ -84,7 +84,7 @@ void BlobSenseComponent::setup() {
   this->history_ = new uint16_t[ZONES][HIST_BINS]();  // NOLINT
 
   this->dev_.platform.handle = this;
-  this->dev_.platform.address = VL53L5CX_DEFAULT_I2C_ADDRESS;
+  this->dev_.platform.address = VLX_C(DEFAULT_I2C_ADDRESS);
 
   this->set_motion_(false);
   this->publish_counters_();
@@ -107,7 +107,7 @@ void BlobSenseComponent::schedule_init_retry_() {
 void IRAM_ATTR BlobSenseComponent::gpio_intr(BlobSenseComponent *arg) { arg->data_ready_ = true; }
 
 void BlobSenseComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "BlobSense (VL53L5CX, driver ST %s):", VL53L5CX_API_REVISION);
+  ESP_LOGCONFIG(TAG, "BlobSense (%s, driver ST %s):", VLX_MODEL, VLX_C(API_REVISION));
   LOG_I2C_DEVICE(this);
   LOG_PIN("  Broche INT: ", this->int_pin_);
   LOG_PIN("  Broche LPn: ", this->lpn_pin_);
@@ -169,14 +169,14 @@ void BlobSenseComponent::loop() {
   }
 
   uint8_t ready = 0;
-  if (vl53l5cx_check_data_ready(&this->dev_, &ready) != VL53L5CX_STATUS_OK) {
+  if (VLX(check_data_ready)(&this->dev_, &ready) != VLX_C(STATUS_OK)) {
     this->handle_sensor_error_();
     return;
   }
   if (!ready)
     return;
 
-  if (vl53l5cx_get_ranging_data(&this->dev_, &this->results_) != VL53L5CX_STATUS_OK) {
+  if (VLX(get_ranging_data)(&this->dev_, &this->results_) != VLX_C(STATUS_OK)) {
     this->handle_sensor_error_();
     return;
   }
@@ -204,48 +204,56 @@ bool BlobSenseComponent::init_sensor_() {
     return false;
   }
 
-  // 2. Est-ce bien un VL53L5CX ? (identifiant 0xF0, révision 0x02)
+  // 2. Est-ce bien le modèle configuré ? (identifiant 0xF0, révision 0x02 pour
+  //    le VL53L5CX, 0x0C pour le VL53L8CX)
   uint8_t device_id = 0, revision_id = 0;
   uint8_t status = WrByte(&this->dev_.platform, 0x7fff, 0x00);
   status |= RdByte(&this->dev_.platform, 0x00, &device_id);
   status |= RdByte(&this->dev_.platform, 0x01, &revision_id);
   status |= WrByte(&this->dev_.platform, 0x7fff, 0x02);
-  if (status != VL53L5CX_STATUS_OK) {
+  if (status != VLX_C(STATUS_OK)) {
     this->failure_reason_ = "erreur de lecture de l'identifiant";
     ESP_LOGE(TAG, "Le capteur répond mais la lecture de son identifiant échoue");
     return false;
   }
-  if (device_id != 0xF0 || revision_id != 0x02) {
-    this->failure_reason_ = "identifiant inattendu (pas un VL53L5CX ?)";
-    ESP_LOGE(TAG, "Identifiant inattendu : 0x%02X / 0x%02X (attendu 0xF0 / 0x02)", device_id, revision_id);
+  if (device_id != VLX_DEVICE_ID || revision_id != VLX_REVISION_ID) {
+    if (device_id == VLX_DEVICE_ID && revision_id == VLX_C(REVISION)) {
+      this->failure_reason_ = "un VL53L5CX est branché : mettre « model: vl53l5cx »";
+    } else if (device_id == VLX_DEVICE_ID && revision_id == VL53L8CX_REVISION) {
+      this->failure_reason_ = "un VL53L8CX est branché : mettre « model: vl53l8cx »";
+    } else {
+      this->failure_reason_ = "identifiant inattendu (capteur inconnu)";
+    }
+    ESP_LOGE(TAG, "Identifiant 0x%02X / 0x%02X, attendu 0x%02X / 0x%02X pour un %s : %s", device_id, revision_id,
+             VLX_DEVICE_ID, VLX_REVISION_ID, VLX_MODEL, this->failure_reason_);
     return false;
   }
 
   // 3. Chargement du firmware et initialisation.
-  ESP_LOGI(TAG, "VL53L5CX détecté, chargement du firmware...");
+  ESP_LOGI(TAG, "%s détecté, chargement du firmware...", VLX_MODEL);
   const uint32_t start = millis();
-  status = vl53l5cx_init(&this->dev_);
-  if (status != VL53L5CX_STATUS_OK) {
+  status = VLX(init)(&this->dev_);
+  if (status != VLX_C(STATUS_OK)) {
     this->failure_reason_ = "échec du chargement du firmware";
-    ESP_LOGE(TAG, "Échec de l'initialisation du VL53L5CX (code %u, après %" PRIu32 " ms)", status,
+    ESP_LOGE(TAG, "Échec de l'initialisation du %s (code %u, après %" PRIu32 " ms)", VLX_MODEL, status,
              millis() - start);
     return false;
   }
   ESP_LOGI(TAG, "Firmware chargé en %" PRIu32 " ms", millis() - start);
 
-  status = VL53L5CX_STATUS_OK;
-  status |= vl53l5cx_set_resolution(&this->dev_, VL53L5CX_RESOLUTION_8X8);
-  status |= vl53l5cx_set_ranging_mode(&this->dev_, VL53L5CX_RANGING_MODE_AUTONOMOUS);
-  status |= vl53l5cx_set_ranging_frequency_hz(&this->dev_, this->ranging_frequency_);
-  status |= vl53l5cx_set_integration_time_ms(&this->dev_, this->integration_time_);
-  status |= vl53l5cx_set_target_order(&this->dev_, VL53L5CX_TARGET_ORDER_CLOSEST);
-  if (status != VL53L5CX_STATUS_OK) {
+  status = VLX_C(STATUS_OK);
+  status |= VLX(set_resolution)(&this->dev_, VLX_C(RESOLUTION_8X8));
+  status |= VLX(set_ranging_mode)(&this->dev_, VLX_C(RANGING_MODE_AUTONOMOUS));
+  status |= VLX(set_ranging_frequency_hz)(&this->dev_, this->ranging_frequency_);
+  status |= VLX(set_integration_time_ms)(&this->dev_, this->integration_time_);
+  status |= VLX(set_target_order)(&this->dev_, VLX_C(TARGET_ORDER_CLOSEST));
+  if (status != VLX_C(STATUS_OK)) {
     this->failure_reason_ = "échec de la configuration";
-    ESP_LOGE(TAG, "Échec de la configuration du VL53L5CX (code %u)", status);
+    ESP_LOGE(TAG, "Échec de la configuration du %s (code %u)", VLX_MODEL, status);
     return false;
   }
   if (this->cover_calibrated_) {
-    if (vl53l5cx_set_caldata_xtalk(&this->dev_, this->cover_pref_data_.data) == VL53L5CX_STATUS_OK) {
+    if (VLX(set_caldata_xtalk)(&this->dev_, this->cover_pref_data_.data) == VLX_C(STATUS_OK)) {
       ESP_LOGI(TAG, "Calibration de la protection appliquée");
     } else {
       ESP_LOGW(TAG, "Impossible d'appliquer la calibration de la protection");
@@ -254,7 +262,7 @@ bool BlobSenseComponent::init_sensor_() {
 
   this->sensor_ok_ = true;
   if (this->active_) {
-    if (vl53l5cx_start_ranging(&this->dev_) != VL53L5CX_STATUS_OK) {
+    if (VLX(start_ranging)(&this->dev_) != VLX_C(STATUS_OK)) {
       ESP_LOGE(TAG, "Impossible de démarrer les mesures");
       this->failure_reason_ = "échec du démarrage des mesures";
       this->sensor_ok_ = false;
@@ -262,12 +270,12 @@ bool BlobSenseComponent::init_sensor_() {
     }
     this->ranging_ = true;
   } else {
-    vl53l5cx_set_power_mode(&this->dev_, VL53L5CX_POWER_MODE_SLEEP);
+    VLX(set_power_mode)(&this->dev_, VLX_C(POWER_MODE_SLEEP));
   }
   this->last_frame_ms_ = millis();
   this->failure_reason_ = "";
   this->status_clear_error();
-  ESP_LOGI(TAG, "VL53L5CX prêt");
+  ESP_LOGI(TAG, "%s prêt", VLX_MODEL);
   return true;
 }
 
@@ -291,8 +299,8 @@ void BlobSenseComponent::set_active(bool active) {
 
   if (active) {
     ESP_LOGI(TAG, "Lecture active");
-    vl53l5cx_set_power_mode(&this->dev_, VL53L5CX_POWER_MODE_WAKEUP);
-    if (vl53l5cx_start_ranging(&this->dev_) == VL53L5CX_STATUS_OK) {
+    VLX(set_power_mode)(&this->dev_, VLX_C(POWER_MODE_WAKEUP));
+    if (VLX(start_ranging)(&this->dev_) == VLX_C(STATUS_OK)) {
       this->ranging_ = true;
       this->last_frame_ms_ = millis();
       this->data_ready_ = false;
@@ -301,8 +309,8 @@ void BlobSenseComponent::set_active(bool active) {
     }
   } else {
     ESP_LOGI(TAG, "Lecture en veille");
-    vl53l5cx_stop_ranging(&this->dev_);
-    vl53l5cx_set_power_mode(&this->dev_, VL53L5CX_POWER_MODE_SLEEP);
+    VLX(stop_ranging)(&this->dev_);
+    VLX(set_power_mode)(&this->dev_, VLX_C(POWER_MODE_SLEEP));
     this->ranging_ = false;
     this->active_mask_ = 0;
     this->set_motion_(false);
@@ -710,17 +718,17 @@ void BlobSenseComponent::finish_direction_calibration_() {
 bool BlobSenseComponent::pause_ranging_() {
   const bool was_ranging = this->ranging_;
   if (was_ranging) {
-    vl53l5cx_stop_ranging(&this->dev_);
+    VLX(stop_ranging)(&this->dev_);
     this->ranging_ = false;
   } else {
-    vl53l5cx_set_power_mode(&this->dev_, VL53L5CX_POWER_MODE_WAKEUP);
+    VLX(set_power_mode)(&this->dev_, VLX_C(POWER_MODE_WAKEUP));
   }
   return was_ranging;
 }
 
 void BlobSenseComponent::resume_ranging_(bool was_ranging, bool relearn) {
   if (was_ranging) {
-    if (vl53l5cx_start_ranging(&this->dev_) == VL53L5CX_STATUS_OK) {
+    if (VLX(start_ranging)(&this->dev_) == VLX_C(STATUS_OK)) {
       this->ranging_ = true;
       this->last_frame_ms_ = millis();
       this->data_ready_ = false;
@@ -728,7 +736,7 @@ void BlobSenseComponent::resume_ranging_(bool was_ranging, bool relearn) {
       this->handle_sensor_error_();
     }
   } else {
-    vl53l5cx_set_power_mode(&this->dev_, VL53L5CX_POWER_MODE_SLEEP);
+    VLX(set_power_mode)(&this->dev_, VLX_C(POWER_MODE_SLEEP));
   }
   this->reset_tracking_();
   // Les distances mesurées changent légèrement : on réapprend le fond.
@@ -750,7 +758,7 @@ void BlobSenseComponent::change_integration_time(uint16_t ms) {
   if (!this->sensor_ok_)
     return;  // appliqué à l'initialisation
   const bool was_ranging = this->pause_ranging_();
-  if (vl53l5cx_set_integration_time_ms(&this->dev_, ms) == VL53L5CX_STATUS_OK) {
+  if (VLX(set_integration_time_ms)(&this->dev_, ms) == VLX_C(STATUS_OK)) {
     ESP_LOGI(TAG, "Temps d'intégration : %u ms", ms);
   } else {
     ESP_LOGW(TAG, "Impossible de changer le temps d'intégration");
@@ -795,14 +803,14 @@ void BlobSenseComponent::calibrate_cover() {
            this->cover_reflectance_, this->cover_samples_);
   const bool was_ranging = this->pause_ranging_();
   const uint32_t start = millis();
-  uint8_t status = vl53l5cx_calibrate_xtalk(&this->dev_, this->cover_reflectance_, this->cover_samples_, distance);
-  if (status == VL53L5CX_STATUS_OK)
-    status = vl53l5cx_get_caldata_xtalk(&this->dev_, this->cover_pref_data_.data);
+  uint8_t status = VLX(calibrate_xtalk)(&this->dev_, this->cover_reflectance_, this->cover_samples_, distance);
+  if (status == VLX_C(STATUS_OK))
+    status = VLX(get_caldata_xtalk)(&this->dev_, this->cover_pref_data_.data);
 
-  if (status != VL53L5CX_STATUS_OK) {
+  if (status != VLX_C(STATUS_OK)) {
     ESP_LOGE(TAG, "Échec de la calibration de la protection (code %u). Calibration précédente conservée.", status);
     if (this->cover_calibrated_)
-      vl53l5cx_set_caldata_xtalk(&this->dev_, this->cover_pref_data_.data);
+      VLX(set_caldata_xtalk)(&this->dev_, this->cover_pref_data_.data);
     this->resume_ranging_(was_ranging);
     return;
   }
@@ -810,7 +818,7 @@ void BlobSenseComponent::calibrate_cover() {
   // Si la protection ne crée presque pas de reflet, le driver garde ses valeurs
   // par défaut : la calibration est inutile mais sans danger.
   const bool is_default =
-      memcmp(this->cover_pref_data_.data, this->dev_.default_xtalk, VL53L5CX_XTALK_BUFFER_SIZE) == 0;
+      memcmp(this->cover_pref_data_.data, this->dev_.default_xtalk, VLX_C(XTALK_BUFFER_SIZE)) == 0;
   this->cover_pref_data_.magic = COVER_MAGIC;
   this->cover_pref_.save(&this->cover_pref_data_);
   global_preferences->sync();
@@ -829,7 +837,7 @@ void BlobSenseComponent::clear_cover_calibration() {
   this->cover_calibrated_ = false;
   if (this->sensor_ok_) {
     const bool was_ranging = this->pause_ranging_();
-    vl53l5cx_set_caldata_xtalk(&this->dev_, this->dev_.default_xtalk);
+    VLX(set_caldata_xtalk)(&this->dev_, this->dev_.default_xtalk);
     this->resume_ranging_(was_ranging);
   }
   this->publish_cover_status_("non calibrée");
@@ -1025,12 +1033,12 @@ uint8_t BlobSenseComponent::platform_read(uint16_t reg, uint8_t *data, uint32_t 
     const uint32_t n = std::min(len, I2C_CHUNK);
     const uint8_t addr[2] = {static_cast<uint8_t>(reg >> 8), static_cast<uint8_t>(reg & 0xFF)};
     if (this->write_read(addr, 2, data, n) != i2c::ERROR_OK)
-      return VL53L5CX_STATUS_ERROR;
+      return VLX_C(STATUS_ERROR);
     reg += n;
     data += n;
     len -= n;
   }
-  return VL53L5CX_STATUS_OK;
+  return VLX_C(STATUS_OK);
 }
 
 uint8_t BlobSenseComponent::platform_write(uint16_t reg, const uint8_t *data, uint32_t len) {
@@ -1041,19 +1049,19 @@ uint8_t BlobSenseComponent::platform_write(uint16_t reg, const uint8_t *data, ui
     buffer[1] = reg & 0xFF;
     memcpy(buffer + 2, data, n);
     if (this->write(buffer, n + 2) != i2c::ERROR_OK)
-      return VL53L5CX_STATUS_ERROR;
+      return VLX_C(STATUS_ERROR);
     reg += n;
     data += n;
     len -= n;
     if (len > 0)
       App.feed_wdt();  // le firmware (~84 Ko) est écrit en une seule fois
   }
-  return VL53L5CX_STATUS_OK;
+  return VLX_C(STATUS_OK);
 }
 
 uint8_t BlobSenseComponent::platform_reset() {
   if (this->lpn_pin_ == nullptr && this->i2c_rst_pin_ == nullptr)
-    return VL53L5CX_STATUS_ERROR;
+    return VLX_C(STATUS_ERROR);
   if (this->i2c_rst_pin_ != nullptr) {
     // I2C_RST (actif à l'état haut) : réinitialise l'interface I2C du capteur.
     this->i2c_rst_pin_->digital_write(true);
@@ -1067,7 +1075,7 @@ uint8_t BlobSenseComponent::platform_reset() {
     this->lpn_pin_->digital_write(true);
     delay(100);
   }
-  return VL53L5CX_STATUS_OK;
+  return VLX_C(STATUS_OK);
 }
 
 }  // namespace blobsense

@@ -4,7 +4,9 @@ from esphome import automation, pins
 import esphome.codegen as cg
 from esphome.components import i2c
 import esphome.config_validation as cv
-from esphome.const import CONF_ID
+from esphome.const import CONF_ID, CONF_MODEL
+from esphome.core import CORE
+import esphome.final_validate as fv
 
 CODEOWNERS = ["@ev0000"]
 DEPENDENCIES = ["i2c"]
@@ -12,6 +14,33 @@ AUTO_LOAD = ["sensor", "binary_sensor", "switch", "number", "button", "text_sens
 MULTI_CONF = True
 
 CONF_BLOBSENSE_ID = "blobsense_id"
+
+# Modèles pris en charge et fichiers du driver ST propres à chacun. Un seul
+# driver est compilé : les deux définissent des macros internes de même nom.
+MODEL_VL53L5CX = "vl53l5cx"
+MODEL_VL53L8CX = "vl53l8cx"
+DRIVER_FILES = {
+    MODEL_VL53L5CX: [
+        "vl53l5cx_api.c",
+        "vl53l5cx_api.h",
+        "vl53l5cx_buffers.h",
+        "vl53l5cx_plugin_xtalk.c",
+        "vl53l5cx_plugin_xtalk.h",
+    ],
+    MODEL_VL53L8CX: [
+        "vl53l8cx_api.c",
+        "vl53l8cx_api.h",
+        "vl53l8cx_buffers.h",
+        "vl53l8cx_plugin_xtalk.c",
+        "vl53l8cx_plugin_xtalk.h",
+    ],
+}
+DATA_MODEL = "blobsense_model"
+
+
+def FILTER_SOURCE_FILES() -> list[str]:
+    model = CORE.data.get(DATA_MODEL, MODEL_VL53L5CX)
+    return [f for m, files in DRIVER_FILES.items() if m != model for f in files]
 CONF_INT_PIN = "int_pin"
 CONF_LPN_PIN = "lpn_pin"
 CONF_I2C_RST_PIN = "i2c_rst_pin"
@@ -81,6 +110,9 @@ CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
             cv.GenerateID(): cv.declare_id(BlobSenseComponent),
+            cv.Optional(CONF_MODEL, default=MODEL_VL53L5CX): cv.one_of(
+                MODEL_VL53L5CX, MODEL_VL53L8CX, lower=True
+            ),
             cv.Optional(CONF_INT_PIN): pins.internal_gpio_input_pin_schema,
             cv.Optional(CONF_LPN_PIN): pins.gpio_output_pin_schema,
             cv.Optional(CONF_I2C_RST_PIN): pins.gpio_output_pin_schema,
@@ -128,7 +160,21 @@ CONFIG_SCHEMA = cv.All(
 )
 
 
+def _final_validate(config):
+    # Un seul driver par firmware : tous les capteurs doivent être du même modèle.
+    models = {conf[CONF_MODEL] for conf in fv.full_config.get().get("blobsense", [])}
+    if len(models) > 1:
+        raise cv.Invalid("Tous les capteurs blobsense d'un même appareil doivent avoir le même « model »")
+    return config
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate
+
+
 async def to_code(config):
+    CORE.data[DATA_MODEL] = config[CONF_MODEL]
+    if config[CONF_MODEL] == MODEL_VL53L8CX:
+        cg.add_define("USE_BLOBSENSE_VL53L8CX")
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await i2c.register_i2c_device(var, config)
