@@ -516,6 +516,19 @@ suivi devient moins fiable.
 
 Merci de reporter les résultats ici, ils serviront de référence.
 
+**Premiers relevés** (15 Hz, passage vide, capteur à ~1,70 m sur support
+provisoire, sans mesure électrique pour l'instant) :
+
+| Temps d'intégration | Zones valides |
+|---|---|
+| 5 ms | 50 % |
+| 10 ms | 75 % |
+| 16 ms | 80 % |
+
+Le gain est net entre 5 et 10 ms, faible au-delà : **10 ms (valeur par
+défaut) est le bon compromis**. 16 ms n'apporte que 5 points pour 60 % de
+temps d'émission du laser en plus.
+
 ## Limites connues
 
 - Deux personnes qui entrent **déjà collées** et ne se séparent jamais sont
