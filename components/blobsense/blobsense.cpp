@@ -36,6 +36,8 @@ static constexpr float HIST_FAMILIAR_SHARE = 0.25f;
 static constexpr uint16_t HIST_MIN_SAMPLES = 50;
 // Bornes des compteurs de passage.
 static constexpr int32_t COUNTER_LIMIT = 999;
+// Marqueur de validité de la calibration de la protection en flash.
+static constexpr uint32_t COVER_MAGIC = 0xB10B5E01;
 // Délai entre deux tentatives d'initialisation.
 static constexpr uint32_t INIT_RETRY_MS = 10000;
 // Période d'affichage de la matrice de debug.
@@ -73,6 +75,11 @@ void BlobSenseComponent::setup() {
   }
 
   this->restore_orientation_();
+
+  // Calibration de la protection enregistrée (appliquée à chaque initialisation).
+  this->cover_pref_ = global_preferences->make_preference<CoverPref>(fnv1_hash("blobsense_cover") ^ this->address_);
+  this->cover_calibrated_ = this->cover_pref_.load(&this->cover_pref_data_) && this->cover_pref_data_.magic == COVER_MAGIC;
+  this->publish_cover_status_(this->cover_calibrated_ ? "calibrée" : "non calibrée");
 
   this->history_ = new uint16_t[ZONES][HIST_BINS]();  // NOLINT
 
@@ -118,6 +125,14 @@ void BlobSenseComponent::dump_config() {
     ESP_LOGE(TAG, "  Capteur non initialisé : %s", this->failure_reason_);
     ESP_LOGE(TAG, "  Vérifier : alimentation, SDA/SCL, adresse 0x29, LPn à l'état haut (3,3 V),\n"
                   "  I2C_RST à la masse (GND) et PWREN à l'état haut si le module a ces broches");
+  }
+  if (this->cover_use_floor_) {
+    ESP_LOGCONFIG(TAG, "  Calibration de la protection: cible = sol, réflectivité %u %%, %u échantillons, %s",
+                  this->cover_reflectance_, this->cover_samples_, this->cover_calibrated_ ? "calibrée" : "non calibrée");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Calibration de la protection: cible à %u mm, réflectivité %u %%, %u échantillons, %s",
+                  this->cover_distance_mm_, this->cover_reflectance_, this->cover_samples_,
+                  this->cover_calibrated_ ? "calibrée" : "non calibrée");
   }
   LOG_SENSOR("  ", "Hauteur d'installation", this->installation_height_sensor_);
   LOG_SENSOR("  ", "Personnes présentes", this->people_count_sensor_);
@@ -227,6 +242,13 @@ bool BlobSenseComponent::init_sensor_() {
     this->failure_reason_ = "échec de la configuration";
     ESP_LOGE(TAG, "Échec de la configuration du VL53L5CX (code %u)", status);
     return false;
+  }
+  if (this->cover_calibrated_) {
+    if (vl53l5cx_set_caldata_xtalk(&this->dev_, this->cover_pref_data_.data) == VL53L5CX_STATUS_OK) {
+      ESP_LOGI(TAG, "Calibration de la protection appliquée");
+    } else {
+      ESP_LOGW(TAG, "Impossible d'appliquer la calibration de la protection");
+    }
   }
 
   this->sensor_ok_ = true;
@@ -676,6 +698,106 @@ void BlobSenseComponent::finish_direction_calibration_() {
   global_preferences->sync();
   this->apply_orientation_();
   this->publish_orientation_(true);
+}
+
+// ---------------------------------------------------------------------------
+// Calibration de la protection (crosstalk)
+// ---------------------------------------------------------------------------
+
+// Les réglages du capteur ne peuvent être changés que mesures arrêtées.
+bool BlobSenseComponent::pause_ranging_() {
+  const bool was_ranging = this->ranging_;
+  if (was_ranging) {
+    vl53l5cx_stop_ranging(&this->dev_);
+    this->ranging_ = false;
+  } else {
+    vl53l5cx_set_power_mode(&this->dev_, VL53L5CX_POWER_MODE_WAKEUP);
+  }
+  return was_ranging;
+}
+
+void BlobSenseComponent::resume_ranging_(bool was_ranging) {
+  if (was_ranging) {
+    if (vl53l5cx_start_ranging(&this->dev_) == VL53L5CX_STATUS_OK) {
+      this->ranging_ = true;
+      this->last_frame_ms_ = millis();
+      this->data_ready_ = false;
+    } else {
+      this->handle_sensor_error_();
+    }
+  } else {
+    vl53l5cx_set_power_mode(&this->dev_, VL53L5CX_POWER_MODE_SLEEP);
+  }
+  this->reset_tracking_();
+  // Les distances mesurées changent légèrement : on réapprend le fond.
+  this->recalibrate();
+}
+
+void BlobSenseComponent::calibrate_cover() {
+  if (!this->sensor_ok_) {
+    ESP_LOGW(TAG, "Calibration de la protection impossible : capteur non prêt");
+    return;
+  }
+  uint16_t distance = this->cover_distance_mm_;
+  if (this->cover_use_floor_) {
+    if (std::isnan(this->installation_height_mm_)) {
+      ESP_LOGW(TAG, "Calibration de la protection impossible : hauteur d'installation encore inconnue");
+      return;
+    }
+    distance = static_cast<uint16_t>(lroundf(this->installation_height_mm_));
+  }
+  if (distance < 600 || distance > 3000) {
+    ESP_LOGW(TAG, "Calibration de la protection impossible : distance %u mm hors de [600, 3000] mm", distance);
+    return;
+  }
+
+  ESP_LOGI(TAG, "Calibration de la protection : cible à %u mm, réflectivité %u %%, %u échantillons...", distance,
+           this->cover_reflectance_, this->cover_samples_);
+  const bool was_ranging = this->pause_ranging_();
+  const uint32_t start = millis();
+  uint8_t status = vl53l5cx_calibrate_xtalk(&this->dev_, this->cover_reflectance_, this->cover_samples_, distance);
+  if (status == VL53L5CX_STATUS_OK)
+    status = vl53l5cx_get_caldata_xtalk(&this->dev_, this->cover_pref_data_.data);
+
+  if (status != VL53L5CX_STATUS_OK) {
+    ESP_LOGE(TAG, "Échec de la calibration de la protection (code %u). Calibration précédente conservée.", status);
+    if (this->cover_calibrated_)
+      vl53l5cx_set_caldata_xtalk(&this->dev_, this->cover_pref_data_.data);
+    this->resume_ranging_(was_ranging);
+    return;
+  }
+
+  // Si la protection ne crée presque pas de reflet, le driver garde ses valeurs
+  // par défaut : la calibration est inutile mais sans danger.
+  const bool is_default =
+      memcmp(this->cover_pref_data_.data, this->dev_.default_xtalk, VL53L5CX_XTALK_BUFFER_SIZE) == 0;
+  this->cover_pref_data_.magic = COVER_MAGIC;
+  this->cover_pref_.save(&this->cover_pref_data_);
+  global_preferences->sync();
+  this->cover_calibrated_ = true;
+  ESP_LOGI(TAG, "Calibration de la protection réussie en %" PRIu32 " ms%s", millis() - start,
+           is_default ? " (reflet négligeable : valeurs par défaut conservées)" : "");
+  this->publish_cover_status_(is_default ? "calibrée (reflet négligeable)" : "calibrée");
+  this->resume_ranging_(was_ranging);
+}
+
+void BlobSenseComponent::clear_cover_calibration() {
+  ESP_LOGI(TAG, "Effacement de la calibration de la protection");
+  this->cover_pref_data_.magic = 0;
+  this->cover_pref_.save(&this->cover_pref_data_);
+  global_preferences->sync();
+  this->cover_calibrated_ = false;
+  if (this->sensor_ok_) {
+    const bool was_ranging = this->pause_ranging_();
+    vl53l5cx_set_caldata_xtalk(&this->dev_, this->dev_.default_xtalk);
+    this->resume_ranging_(was_ranging);
+  }
+  this->publish_cover_status_("non calibrée");
+}
+
+void BlobSenseComponent::publish_cover_status_(const char *status) {
+  if (this->cover_text_sensor_ != nullptr)
+    this->cover_text_sensor_->publish_state(status);
 }
 
 // ---------------------------------------------------------------------------

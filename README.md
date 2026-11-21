@@ -188,7 +188,9 @@ démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 | `button` | Recalibrer maintenant | Optionnel |
 | `button` | Calibrer le sens de passage | Déduit `axis` et `invert` d'un passage de A vers B |
 | `text_sensor` | Orientation | Réglage en vigueur, par exemple `axis: y, invert: false (calibré)` |
-| `button` | Calibrer le verre de protection | Voir la section « Protection » |
+| `button` | Calibrer la protection | Voir la section « Protection » |
+| `button` | Effacer la calibration de la protection | Si la protection est retirée |
+| `text_sensor` | Calibration protection | `non calibrée`, `calibrée` ou `calibrée (reflet négligeable)` |
 | `switch` | Lecture active | Off = capteur en veille, aucune lecture I2C |
 | `switch` | Debug matrice | Active l'affichage 8×8 dans les logs |
 | action | `subtract` | Soustrait X à un compteur |
@@ -233,6 +235,10 @@ blobsense:
   # axis: y                   # axe de passage dans la matrice (x ou y)
   # invert: false             # inverse les côtés A et B
   # direction_calibration_duration: 5s  # durée de la calibration du sens (bouton)
+  # cover_calibration:        # calibration de la protection (bouton calibrate_cover)
+  #   distance: 60cm          # distance de la cible (60 cm à 3 m), ou « floor » pour le sol
+  #   reflectance: 3%         # réflectivité de la cible (3 % = noir mat, valeur ST)
+  #   samples: 4              # 1 à 16 ; plus = plus précis mais plus long (4 ≈ 2,5 s)
   # band_width: 2             # largeur de la bande centrale, en zones
   # peak_prominence: 15cm     # creux minimal entre deux têtes pour les séparer
 
@@ -291,13 +297,18 @@ button:
       name: "RAZ compteur A"
     reset_b:
       name: "RAZ compteur B"
-    # ⏳ calibrate_cover
+    calibrate_cover:
+      name: "Calibrer la protection"
+    clear_cover_calibration:
+      name: "Effacer la calibration de la protection"
 
 text_sensor:
   - platform: blobsense
     blobsense_id: porte_salon
     orientation:            # orientation en vigueur et son origine (YAML ou calibré)
       name: "Orientation"
+    cover_calibration:      # état de la calibration de la protection
+      name: "Calibration protection"
 
 # Action blobsense.subtract, ici exposée à Home Assistant via l'API
 # (action HA : esphome.<nom_appareil>_subtract). Elle peut aussi être appelée
@@ -403,18 +414,43 @@ sont plus souvent vues comme un seul blob.
 
 ### Protection (verre ou « lunettes »)
 
-Une vitre placée devant le capteur renvoie une partie de la lumière émise
-(crosstalk). Cela fausse les mesures, surtout sur les cibles lointaines ou
-sombres. Le driver ST propose un module de **calibration du crosstalk** :
+Une protection placée devant le capteur renvoie directement vers lui une
+petite partie de la lumière émise : c'est le **crosstalk**. Il peut faire
+paraître un objet plus proche qu'il n'est, ou faire voir un faux objet collé
+au capteur.
 
-1. Placer une cible à la distance prescrite par ST (de l'ordre de 60 cm),
-   capteur avec sa protection montée.
-2. Appuyer sur « Calibrer le verre de protection ».
-3. Les données de calibration (~1 Ko) sont **écrites une seule fois en flash**
-   et rechargées à chaque démarrage.
+D'après ST, le capteur ignore déjà ce reflet tout seul pour tout ce qui est
+**à plus de 60 cm**. La calibration ne sert donc que pour les objets plus
+proches, c'est-à-dire les têtes quand l'installation est basse. Exemples :
+capteur à 2,60 m → tête d'adulte à ~80 cm, pas concernée ; capteur à 1,90 m →
+tête à 10–30 cm, concernée.
 
-Sans protection, cette étape est inutile. La procédure exacte sera précisée
-après les essais avec les protections achetées.
+Pour savoir si c'est utile : comparer le capteur **Distance** avec et sans
+protection, sur une main ou un carton à 20, 40 et 60 cm. Si les valeurs sont
+identiques, la calibration est inutile.
+
+**Calibration** (bouton **Calibrer la protection**, protection montée) :
+
+- La cible doit être **immobile**, à la distance configurée (`distance`, de
+  60 cm à 3 m) et **couvrir tout le champ** de vision (à 60 cm : un carré
+  d'environ 50 × 50 cm). Sa réflectivité est donnée par `reflectance`.
+- Deux façons de faire :
+  1. **Comme ST le recommande** : un carton noir mat de 50 × 50 cm, à 60 cm,
+     avec les valeurs par défaut (`distance: 60cm`, `reflectance: 3%`) ;
+  2. **Sur place, avec le sol** : `distance: floor` utilise la hauteur
+     d'installation mesurée. Passage vide ; régler `reflectance` selon le sol
+     (ordre de grandeur : sol sombre 10 %, parquet 20–30 %, carrelage clair
+     50 %). Moins précis : les murs vus en bord de champ ne sont pas à la même
+     distance.
+- La mesure dure environ 2,5 s (4 échantillons). Pendant ce temps, la lecture
+  est suspendue.
+- Le résultat (776 octets) est **écrit une fois en flash** et réappliqué à
+  chaque démarrage. Si le reflet est négligeable, le driver garde ses
+  valeurs par défaut et l'état indique `calibrée (reflet négligeable)`.
+- La carte de fond est ensuite réapprise (fenêtre courte), puisque les
+  distances mesurées peuvent changer légèrement.
+- **Effacer la calibration de la protection** revient aux valeurs d'usine,
+  par exemple si la protection est retirée.
 
 ## Consommation électrique
 
@@ -493,7 +529,8 @@ n'est envoyé dans la base de données de Home Assistant.
 3. 🧪 **Comptage** (implémenté, à tester sur le matériel) : compteurs A/B en
    miroir bornés à ±999, boutons de remise à zéro, action `subtract`.
 4. ⏳ **Consommation** : mesures réelles et réglage du temps d'intégration.
-5. ⏳ **Protection** : calibration du crosstalk et sauvegarde en flash.
+5. 🧪 **Protection** (implémenté, à tester avec la protection) : calibration
+   du crosstalk, sauvegarde en flash, effacement.
 6. ⏳ **Réglages sur site et documentation** : exemples Home Assistant.
 
 ## Essais sur un bureau
@@ -547,7 +584,8 @@ possible quelques matrices de debug.
 Voir [LICENSE](LICENSE).
 
 Le composant embarque le driver **ST VL53L5CX Ultra Lite Driver (ULD)**
-v1.3.0 (`vl53l5cx_api.c`, `vl53l5cx_api.h`, `vl53l5cx_buffers.h`), © 2020
+v1.3.0 (`vl53l5cx_api.c`, `vl53l5cx_api.h`, `vl53l5cx_buffers.h`,
+`vl53l5cx_plugin_xtalk.c`, `vl53l5cx_plugin_xtalk.h`), © 2020
 STMicroelectronics, distribué ici sous licence **BSD 3-clause**, l'une des
 deux licences proposées par ST dans l'en-tête de ces fichiers. Les fichiers
 sont repris sans modification.

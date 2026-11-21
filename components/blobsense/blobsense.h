@@ -14,6 +14,7 @@
 
 extern "C" {
 #include "vl53l5cx_api.h"
+#include "vl53l5cx_plugin_xtalk.h"
 }
 
 #include "tracker.h"
@@ -68,6 +69,13 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void set_invert(bool invert) { this->invert_ = invert; }
   void set_direction_calibration_duration(uint32_t ms) { this->direction_calibration_ms_ = ms; }
   void set_orientation_text_sensor(text_sensor::TextSensor *s) { this->orientation_text_sensor_ = s; }
+  void set_cover_calibration(uint16_t distance_mm, bool use_floor, uint8_t reflectance, uint8_t samples) {
+    this->cover_distance_mm_ = distance_mm;
+    this->cover_use_floor_ = use_floor;
+    this->cover_reflectance_ = reflectance;
+    this->cover_samples_ = samples;
+  }
+  void set_cover_text_sensor(text_sensor::TextSensor *s) { this->cover_text_sensor_ = s; }
   void set_band_width(uint8_t width) { this->band_width_ = width; }
   void set_peak_prominence(uint16_t mm) { this->peak_prominence_ = mm; }
 
@@ -97,6 +105,10 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   // Calibration du sens : l'utilisateur passe de A vers B pendant la durée
   // configurée ; axis et invert sont déduits de sa trajectoire.
   void calibrate_direction();
+  // Calibration de la protection (crosstalk) : cible immobile couvrant tout le
+  // champ, à la distance configurée (ou le sol). Résultat sauvegardé en flash.
+  void calibrate_cover();
+  void clear_cover_calibration();
   // Compteurs : remise à zéro et soustraction (b = false pour A, true pour B).
   void reset_counter(bool b);
   void subtract(bool b, int32_t value);
@@ -130,6 +142,9 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void observe_direction_(uint32_t now);
   void finish_direction_calibration_();
   void publish_orientation_(bool calibrated);
+  void publish_cover_status_(const char *status);
+  bool pause_ranging_();
+  void resume_ranging_(bool was_ranging);
   void update_distance_sensors_(uint32_t now);
   bool in_band_(uint8_t row, uint8_t col) const;
   void log_matrix_();
@@ -178,6 +193,19 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   bool yaml_axis_x_{false};
   bool yaml_invert_{false};
   ESPPreferenceObject orientation_pref_;
+
+  // Calibration de la protection
+  struct CoverPref {
+    uint32_t magic;
+    uint8_t data[VL53L5CX_XTALK_BUFFER_SIZE];
+  };
+  uint16_t cover_distance_mm_{600};
+  bool cover_use_floor_{false};
+  uint8_t cover_reflectance_{3};
+  uint8_t cover_samples_{4};
+  CoverPref cover_pref_data_{};
+  bool cover_calibrated_{false};
+  ESPPreferenceObject cover_pref_;
 
   // Géométrie : cosinus de l'angle de chaque zone par rapport à la verticale
   float cos_zone_[ZONES]{};
@@ -231,6 +259,7 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   sensor::Sensor *counter_b_sensor_{nullptr};
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
   text_sensor::TextSensor *orientation_text_sensor_{nullptr};
+  text_sensor::TextSensor *cover_text_sensor_{nullptr};
   std::vector<DistanceSensor> distance_sensors_;
 };
 

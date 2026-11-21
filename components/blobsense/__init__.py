@@ -27,6 +27,28 @@ CONF_INVERT = "invert"
 CONF_BAND_WIDTH = "band_width"
 CONF_PEAK_PROMINENCE = "peak_prominence"
 CONF_DIRECTION_CALIBRATION_DURATION = "direction_calibration_duration"
+CONF_COVER_CALIBRATION = "cover_calibration"
+CONF_DISTANCE = "distance"
+CONF_REFLECTANCE = "reflectance"
+CONF_SAMPLES = "samples"
+
+
+def _cover_distance(value):
+    # « floor » : la cible est le sol, à la hauteur d'installation mesurée.
+    if isinstance(value, str) and value.strip().lower() == "floor":
+        return "floor"
+    return cv.All(cv.distance, cv.Range(min=0.6, max=3.0))(value)
+
+
+COVER_CALIBRATION_SCHEMA = cv.Schema(
+    {
+        cv.Optional(CONF_DISTANCE, default="60cm"): _cover_distance,
+        cv.Optional(CONF_REFLECTANCE, default="3%"): cv.All(
+            cv.percentage, cv.Range(min=0.01, max=0.99)
+        ),
+        cv.Optional(CONF_SAMPLES, default=4): cv.int_range(min=1, max=16),
+    }
+)
 
 blobsense_ns = cg.esphome_ns.namespace("blobsense")
 BlobSenseComponent = blobsense_ns.class_(
@@ -94,6 +116,7 @@ CONFIG_SCHEMA = cv.All(
                 cv.positive_time_period_milliseconds,
                 cv.Range(min=cv.TimePeriod(seconds=2), max=cv.TimePeriod(seconds=60)),
             ),
+            cv.Optional(CONF_COVER_CALIBRATION, default={}): COVER_CALIBRATION_SCHEMA,
             cv.Optional(CONF_PEAK_PROMINENCE, default="15cm"): cv.All(
                 cv.distance, cv.Range(min=0.02, max=1.0)
             ),
@@ -133,6 +156,16 @@ async def to_code(config):
     cg.add(
         var.set_direction_calibration_duration(
             config[CONF_DIRECTION_CALIBRATION_DURATION].total_milliseconds
+        )
+    )
+    cover = config[CONF_COVER_CALIBRATION]
+    use_floor = cover[CONF_DISTANCE] == "floor"
+    cg.add(
+        var.set_cover_calibration(
+            0 if use_floor else int(round(cover[CONF_DISTANCE] * 1000)),
+            use_floor,
+            int(round(cover[CONF_REFLECTANCE] * 100)),
+            cover[CONF_SAMPLES],
         )
     )
     cg.add(var.set_peak_prominence(int(round(config[CONF_PEAK_PROMINENCE] * 1000))))

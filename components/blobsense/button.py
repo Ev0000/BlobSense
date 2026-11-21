@@ -9,6 +9,8 @@ CONF_RECALIBRATE = "recalibrate"
 CONF_RESET_A = "reset_a"
 CONF_RESET_B = "reset_b"
 CONF_CALIBRATE_DIRECTION = "calibrate_direction"
+CONF_CALIBRATE_COVER = "calibrate_cover"
+CONF_CLEAR_COVER_CALIBRATION = "clear_cover_calibration"
 
 BlobSenseButton = blobsense_ns.class_("BlobSenseButton", button.Button)
 ButtonType = blobsense_ns.enum("ButtonType", is_class=True)
@@ -25,6 +27,16 @@ CONFIG_SCHEMA = cv.Schema(
             BlobSenseButton,
             entity_category=ENTITY_CATEGORY_CONFIG,
             icon="mdi:swap-vertical",
+        ),
+        cv.Optional(CONF_CALIBRATE_COVER): button.button_schema(
+            BlobSenseButton,
+            entity_category=ENTITY_CATEGORY_CONFIG,
+            icon="mdi:glasses",
+        ),
+        cv.Optional(CONF_CLEAR_COVER_CALIBRATION): button.button_schema(
+            BlobSenseButton,
+            entity_category=ENTITY_CATEGORY_CONFIG,
+            icon="mdi:glasses",
         ),
         cv.Optional(CONF_RESET_A): button.button_schema(
             BlobSenseButton,
@@ -45,6 +57,8 @@ async def to_code(config):
         (CONF_RESET_A, ButtonType.RESET_A),
         (CONF_RESET_B, ButtonType.RESET_B),
         (CONF_CALIBRATE_DIRECTION, ButtonType.CALIBRATE_DIRECTION),
+        (CONF_CALIBRATE_COVER, ButtonType.CALIBRATE_COVER),
+        (CONF_CLEAR_COVER_CALIBRATION, ButtonType.CLEAR_COVER_CALIBRATION),
     ):
         if conf := config.get(key):
             btn = await button.new_button(conf, type_)
