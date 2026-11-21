@@ -183,6 +183,8 @@ démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 | `binary_sensor` | Mouvement | |
 | `number` | Hauteur min | cm, valeur conservée après redémarrage |
 | `number` | Hauteur max | cm, valeur conservée après redémarrage |
+| `number` | Temps d'intégration | ms, réglable à chaud, borné selon la fréquence, valeur conservée après redémarrage |
+| `sensor` | Zones valides | %, part des zones donnant une mesure fiable (moyenne sur 10 s) |
 | `button` | Remise à zéro A | |
 | `button` | Remise à zéro B | |
 | `button` | Recalibrer maintenant | Optionnel |
@@ -252,6 +254,8 @@ sensor:
       smoothing: 5s         # lissage (constante de temps), 0s pour le désactiver
     people_count:
       name: "Personnes présentes"
+    valid_zones:            # part des zones donnant une mesure fiable (%, moyenne 10 s)
+      name: "Zones valides"
     counter_a:              # variation d'occupation du côté A (−999 … 999)
       name: "Compteur A"
       # single_access: false     # true si cette porte est le seul accès de la pièce A :
@@ -275,6 +279,8 @@ number:
     max_height:
       name: "Hauteur max"
       initial_value: 210
+    integration_time:       # temps d'intégration réglable à chaud (ms), borné selon la fréquence
+      name: "Temps d'intégration"
 
 switch:
   - platform: blobsense
@@ -478,8 +484,37 @@ avec toute autre solution choisie dans le YAML (par exemple un bus filaire
 vers un hub). Le CPU peut tourner à 80 MHz : le traitement d'une matrice 8×8 à
 15 Hz est très léger.
 
-Les chiffres réels (ESP + capteur + convertisseur) seront mesurés pendant le
-développement et ajoutés ici.
+### Mesurer la consommation
+
+Matériel : un wattmètre USB ou un multimètre en série sur l'alimentation du
+nœud (côté 12 V si possible, pour inclure le convertisseur).
+
+Préparation :
+
+- `esp32: cpu_frequency: 80MHz` : suffisant pour ce composant (le traitement
+  d'une image 8×8 est très léger), et moins gourmand que 160 MHz ;
+- déclarer l'entité **Temps d'intégration** (`number`) et le capteur **Zones
+  valides** (`sensor`), pour régler et juger sans reflasher ;
+- noter si le Wi-Fi est actif : c'est souvent le plus gros consommateur. Pour
+  un nœud qui communique en CAN, mesurer aussi Wi-Fi coupé.
+
+Mesures, passage vide, environ 1 minute chacune :
+
+| Situation | Temps d'intégration | Zones valides | Puissance (W) |
+|---|---|---|---|
+| Lecture active | 5 ms | | |
+| Lecture active | 10 ms | | |
+| Lecture active | 16 ms | | |
+| Lecture en veille (switch off) | — | — | |
+| Lecture active, CPU à 160 MHz | 10 ms | | |
+
+Choix du temps d'intégration : prendre la valeur la plus courte pour laquelle
+**Zones valides** reste élevé, avec quelqu'un sous le capteur et sur le sol.
+Vérifier ensuite que les passages sont toujours bien comptés. En dessous, les
+zones sans mesure se multiplient (cheveux sombres, sol loin ou mat) et le
+suivi devient moins fiable.
+
+Merci de reporter les résultats ici, ils serviront de référence.
 
 ## Limites connues
 
@@ -526,7 +561,8 @@ n'est envoyé dans la base de données de Home Assistant.
    et séparation, personnes présentes, passages dans les logs.
 3. 🧪 **Comptage** (implémenté, à tester sur le matériel) : compteurs A/B en
    miroir bornés à ±999, boutons de remise à zéro, action `subtract`.
-4. ⏳ **Consommation** : mesures réelles et réglage du temps d'intégration.
+4. 🧪 **Consommation** (outils prêts, mesures à faire) : temps d'intégration
+   réglable à chaud, capteur Zones valides, protocole de mesure.
 5. 🧪 **Protection** (implémenté, à tester avec la protection) : calibration
    du crosstalk, sauvegarde en flash, effacement.
 6. ⏳ **Réglages sur site et documentation** : exemples Home Assistant.

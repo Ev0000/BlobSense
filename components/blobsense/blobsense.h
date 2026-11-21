@@ -60,6 +60,10 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void set_i2c_rst_pin(GPIOPin *pin) { this->i2c_rst_pin_ = pin; }
   void set_ranging_frequency(uint8_t hz) { this->ranging_frequency_ = hz; }
   void set_integration_time(uint16_t ms) { this->integration_time_ = ms; }
+  // Changement à chaud (entité number) : borné à ce que permet la fréquence.
+  void change_integration_time(uint16_t ms);
+  uint16_t max_integration_time() const { return (1000 / this->ranging_frequency_ - 1) / 4; }
+  void set_valid_zones_sensor(sensor::Sensor *s) { this->valid_zones_sensor_ = s; }
   void set_background_window(uint32_t ms) { this->background_window_ = ms; }
   void set_startup_window(uint32_t ms) { this->startup_window_ = ms; }
   void set_background_margin(uint16_t mm) { this->background_margin_ = mm; }
@@ -144,7 +148,8 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   void publish_orientation_(bool calibrated);
   void publish_cover_status_(const char *status);
   bool pause_ranging_();
-  void resume_ranging_(bool was_ranging);
+  void resume_ranging_(bool was_ranging, bool relearn = true);
+  void update_valid_zones_(uint32_t now);
   void update_distance_sensors_(uint32_t now);
   bool in_band_(uint8_t row, uint8_t col) const;
   void log_matrix_();
@@ -260,6 +265,10 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   binary_sensor::BinarySensor *motion_binary_sensor_{nullptr};
   text_sensor::TextSensor *orientation_text_sensor_{nullptr};
   text_sensor::TextSensor *cover_text_sensor_{nullptr};
+  sensor::Sensor *valid_zones_sensor_{nullptr};
+  uint32_t valid_zone_sum_{0};
+  uint32_t valid_frame_count_{0};
+  uint32_t valid_last_publish_ms_{0};
   std::vector<DistanceSensor> distance_sensors_;
 };
 

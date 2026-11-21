@@ -44,7 +44,7 @@ class BlobSenseSwitch : public switch_::Switch, public Component, public Parente
 
 // --- Numbers : hauteur min / max (cm), valeur conservée après redémarrage ---
 
-enum class NumberType : uint8_t { MIN_HEIGHT, MAX_HEIGHT };
+enum class NumberType : uint8_t { MIN_HEIGHT, MAX_HEIGHT, INTEGRATION_TIME };
 
 class BlobSenseNumber : public number::Number, public Component, public Parented<BlobSenseComponent> {
  public:
@@ -78,10 +78,16 @@ class BlobSenseNumber : public number::Number, public Component, public Parented
   }
 
   void apply_(float value) {
-    if (this->type_ == NumberType::MIN_HEIGHT) {
-      this->parent_->set_min_height(value);
-    } else {
-      this->parent_->set_max_height(value);
+    switch (this->type_) {
+      case NumberType::MIN_HEIGHT:
+        this->parent_->set_min_height(value);
+        break;
+      case NumberType::MAX_HEIGHT:
+        this->parent_->set_max_height(value);
+        break;
+      case NumberType::INTEGRATION_TIME:
+        this->parent_->change_integration_time(static_cast<uint16_t>(value));
+        break;
     }
   }
 

@@ -135,6 +135,7 @@ void BlobSenseComponent::dump_config() {
                   this->cover_calibrated_ ? "calibrée" : "non calibrée");
   }
   LOG_SENSOR("  ", "Hauteur d'installation", this->installation_height_sensor_);
+  LOG_SENSOR("  ", "Zones valides", this->valid_zones_sensor_);
   LOG_SENSOR("  ", "Personnes présentes", this->people_count_sensor_);
   LOG_SENSOR("  ", "Compteur A", this->counter_a_sensor_);
   if (this->counter_a_sensor_ != nullptr)
@@ -338,6 +339,7 @@ void BlobSenseComponent::process_frame_(uint32_t now) {
   }
 
   this->update_distance_sensors_(now);
+  this->update_valid_zones_(now);
   this->accumulate_background_(dt);
   this->detect_(now);
   this->learn_distances_(dt);
@@ -716,7 +718,7 @@ bool BlobSenseComponent::pause_ranging_() {
   return was_ranging;
 }
 
-void BlobSenseComponent::resume_ranging_(bool was_ranging) {
+void BlobSenseComponent::resume_ranging_(bool was_ranging, bool relearn) {
   if (was_ranging) {
     if (vl53l5cx_start_ranging(&this->dev_) == VL53L5CX_STATUS_OK) {
       this->ranging_ = true;
@@ -730,7 +732,45 @@ void BlobSenseComponent::resume_ranging_(bool was_ranging) {
   }
   this->reset_tracking_();
   // Les distances mesurées changent légèrement : on réapprend le fond.
-  this->recalibrate();
+  if (relearn)
+    this->recalibrate();
+}
+
+void BlobSenseComponent::change_integration_time(uint16_t ms) {
+  const uint16_t max_ms = this->max_integration_time();
+  if (ms > max_ms) {
+    ESP_LOGW(TAG, "Temps d'intégration %u ms trop long à %u Hz : limité à %u ms", ms, this->ranging_frequency_, max_ms);
+    ms = max_ms;
+  }
+  if (ms < 2)
+    ms = 2;
+  if (ms == this->integration_time_ && this->sensor_ok_)
+    return;
+  this->integration_time_ = ms;
+  if (!this->sensor_ok_)
+    return;  // appliqué à l'initialisation
+  const bool was_ranging = this->pause_ranging_();
+  if (vl53l5cx_set_integration_time_ms(&this->dev_, ms) == VL53L5CX_STATUS_OK) {
+    ESP_LOGI(TAG, "Temps d'intégration : %u ms", ms);
+  } else {
+    ESP_LOGW(TAG, "Impossible de changer le temps d'intégration");
+  }
+  this->resume_ranging_(was_ranging, false);
+}
+
+// Part des zones donnant une mesure fiable, moyennée sur 10 s : sert à choisir
+// le temps d'intégration le plus court qui reste fiable.
+void BlobSenseComponent::update_valid_zones_(uint32_t now) {
+  if (this->valid_zones_sensor_ == nullptr)
+    return;
+  this->valid_zone_sum_ += __builtin_popcountll(this->valid_mask_);
+  this->valid_frame_count_++;
+  if (now - this->valid_last_publish_ms_ < 10000)
+    return;
+  this->valid_last_publish_ms_ = now;
+  this->valid_zones_sensor_->publish_state(roundf(100.0f * this->valid_zone_sum_ / (this->valid_frame_count_ * ZONES)));
+  this->valid_zone_sum_ = 0;
+  this->valid_frame_count_ = 0;
 }
 
 void BlobSenseComponent::calibrate_cover() {

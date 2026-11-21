@@ -8,6 +8,7 @@ from esphome.const import (
     CONF_UPDATE_INTERVAL,
     STATE_CLASS_MEASUREMENT,
     UNIT_CENTIMETER,
+    UNIT_PERCENT,
 )
 
 from . import CONF_BLOBSENSE_ID, BlobSenseComponent
@@ -19,6 +20,7 @@ CONF_COUNTER_B = "counter_b"
 CONF_SINGLE_ACCESS = "single_access"
 CONF_ZONE = "zone"
 CONF_SMOOTHING = "smoothing"
+CONF_VALID_ZONES = "valid_zones"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -30,6 +32,14 @@ CONFIG_SCHEMA = cv.Schema(
             state_class=STATE_CLASS_MEASUREMENT,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
             icon="mdi:arrow-expand-vertical",
+        ),
+        # Part des zones donnant une mesure fiable (moyenne sur 10 s).
+        cv.Optional(CONF_VALID_ZONES): sensor.sensor_schema(
+            unit_of_measurement=UNIT_PERCENT,
+            accuracy_decimals=0,
+            state_class=STATE_CLASS_MEASUREMENT,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            icon="mdi:grid",
         ),
         cv.Optional(CONF_PEOPLE_COUNT): sensor.sensor_schema(
             accuracy_decimals=0,
@@ -77,6 +87,9 @@ async def to_code(config):
     if conf := config.get(CONF_INSTALLATION_HEIGHT):
         sens = await sensor.new_sensor(conf)
         cg.add(hub.set_installation_height_sensor(sens))
+    if conf := config.get(CONF_VALID_ZONES):
+        sens = await sensor.new_sensor(conf)
+        cg.add(hub.set_valid_zones_sensor(sens))
     if conf := config.get(CONF_PEOPLE_COUNT):
         sens = await sensor.new_sensor(conf)
         cg.add(hub.set_people_count_sensor(sens))
