@@ -7,8 +7,7 @@ de passages bidirectionnel** par suivi de blobs.
 > 🚧 **Statut : en test.** Mesure, carte de fond adaptative, mouvement,
 > suivi des blobs, personnes présentes, compteurs de passage, remises à zéro,
 > action `subtract`, calibration du sens et calibration de la protection sont
-> implémentés. Restent les mesures de consommation et les essais à plusieurs
-> personnes.
+> implémentés. Restent les essais à plusieurs personnes.
 
 ---
 
@@ -484,51 +483,6 @@ avec toute autre solution choisie dans le YAML (par exemple un bus filaire
 vers un hub). Le CPU peut tourner à 80 MHz : le traitement d'une matrice 8×8 à
 15 Hz est très léger.
 
-### Mesurer la consommation
-
-Matériel : un wattmètre USB ou un multimètre en série sur l'alimentation du
-nœud (côté 12 V si possible, pour inclure le convertisseur).
-
-Préparation :
-
-- `esp32: cpu_frequency: 80MHz` : suffisant pour ce composant (le traitement
-  d'une image 8×8 est très léger), et moins gourmand que 160 MHz ;
-- déclarer l'entité **Temps d'intégration** (`number`) et le capteur **Zones
-  valides** (`sensor`), pour régler et juger sans reflasher ;
-- noter si le Wi-Fi est actif : c'est souvent le plus gros consommateur. Pour
-  un nœud qui communique en CAN, mesurer aussi Wi-Fi coupé.
-
-Mesures, passage vide, environ 1 minute chacune :
-
-| Situation | Temps d'intégration | Zones valides | Puissance (W) |
-|---|---|---|---|
-| Lecture active | 5 ms | | |
-| Lecture active | 10 ms | | |
-| Lecture active | 16 ms | | |
-| Lecture en veille (switch off) | — | — | |
-| Lecture active, CPU à 160 MHz | 10 ms | | |
-
-Choix du temps d'intégration : prendre la valeur la plus courte pour laquelle
-**Zones valides** reste élevé, avec quelqu'un sous le capteur et sur le sol.
-Vérifier ensuite que les passages sont toujours bien comptés. En dessous, les
-zones sans mesure se multiplient (cheveux sombres, sol loin ou mat) et le
-suivi devient moins fiable.
-
-Merci de reporter les résultats ici, ils serviront de référence.
-
-**Premiers relevés** (15 Hz, passage vide, capteur à ~1,70 m sur support
-provisoire, sans mesure électrique pour l'instant) :
-
-| Temps d'intégration | Zones valides |
-|---|---|
-| 5 ms | 50 % |
-| 10 ms | 75 % |
-| 16 ms | 80 % |
-
-Le gain est net entre 5 et 10 ms, faible au-delà : **10 ms (valeur par
-défaut) est le bon compromis**. 16 ms n'apporte que 5 points pour 60 % de
-temps d'émission du laser en plus.
-
 ## Limites connues
 
 - Deux personnes qui entrent **déjà collées** et ne se séparent jamais sont
@@ -580,8 +534,8 @@ n'est envoyé dans la base de données de Home Assistant.
    et séparation, personnes présentes, passages dans les logs.
 3. 🧪 **Comptage** (implémenté, à tester sur le matériel) : compteurs A/B en
    miroir bornés à ±999, boutons de remise à zéro, action `subtract`.
-4. 🧪 **Consommation** (outils prêts, mesures à faire) : temps d'intégration
-   réglable à chaud, capteur Zones valides, protocole de mesure.
+4. ✅ **Consommation** : mode autonomous, switch Lecture active, temps
+   d'intégration réglable à chaud, capteur Zones valides.
 5. 🧪 **Protection** (implémenté, à tester avec la protection) : calibration
    du crosstalk, sauvegarde en flash, effacement.
 6. ⏳ **Réglages sur site et documentation** : exemples Home Assistant.
