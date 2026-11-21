@@ -4,11 +4,11 @@ Composant externe ESPHome (`external_components`) pour le capteur ToF multizone
 **ST VL53L5CX** sur **ESP32-C3** (framework **ESP-IDF**), destiné au **comptage
 de passages bidirectionnel** par suivi de blobs.
 
-> 🚧 **Statut : étape 3 en cours de test.** Mesure, carte de fond
-> adaptative, mouvement, suivi des blobs, personnes présentes, compteurs de
-> passage, remises à zéro et action `subtract` sont implémentés. Restent la
-> calibration du verre de protection et les mesures de consommation. Les
-> fonctions non encore disponibles sont signalées par ⏳.
+> 🚧 **Statut : en test.** Mesure, carte de fond adaptative, mouvement,
+> suivi des blobs, personnes présentes, compteurs de passage, remises à zéro,
+> action `subtract`, calibration du sens et calibration de la protection sont
+> implémentés. Restent les mesures de consommation et les essais à plusieurs
+> personnes.
 
 ---
 
@@ -196,8 +196,6 @@ démarrage. La cohérence est gérée dans Home Assistant (voir plus bas).
 | action | `subtract` | Soustrait X à un compteur |
 
 ## Configuration
-
-Les entités marquées ⏳ ne sont pas encore disponibles.
 
 ```yaml
 esp32:
