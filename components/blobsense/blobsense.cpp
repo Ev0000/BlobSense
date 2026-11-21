@@ -36,17 +36,20 @@ static constexpr float HIST_FAMILIAR_SHARE = 0.25f;
 static constexpr uint16_t HIST_MIN_SAMPLES = 50;
 // Bornes des compteurs de passage.
 static constexpr int32_t COUNTER_LIMIT = 999;
-// Porte : zones centrales de chaque bord (ligne 0, ligne 7, colonne 0, colonne 7).
-static constexpr uint8_t DOOR_EDGE_ZONES[4][2] = {{3, 4}, {59, 60}, {24, 32}, {31, 39}};
+// Porte : 4 zones centrales de chaque bord (ligne 0, ligne 7, colonne 0, colonne 7).
+static constexpr uint8_t DOOR_EDGE_ZONES[4][4] = {
+    {2, 3, 4, 5}, {58, 59, 60, 61}, {16, 24, 32, 40}, {23, 31, 39, 47}};
 static const char *const DOOR_EDGE_NAMES[4] = {"ligne 0", "ligne 7", "colonne 0", "colonne 7"};
-static constexpr uint32_t DOOR_MAGIC = 0xB10BD001;
+static constexpr uint32_t DOOR_MAGIC = 0xB10BD002;
 static constexpr uint32_t DOOR_LEARNING_MS = 2000;
 // Écart minimal avec le fond pour qu'un bord soit reconnu comme la porte.
 static constexpr uint16_t DOOR_MIN_DELTA_MM = 200;
-// Tolérance autour de la distance de référence pour « porte fermée ».
+// Tolérance autour de la distance de référence de chaque zone.
 static constexpr uint16_t DOOR_TOLERANCE_MM = 80;
-// Images consécutives nécessaires pour changer d'état (~0,5 s à 15 Hz).
-static constexpr uint8_t DOOR_DEBOUNCE_FRAMES = 8;
+// Zones (sur 4) qui doivent correspondre au battant pour « porte fermée ».
+static constexpr uint8_t DOOR_MIN_MATCHING = 3;
+// Durée pendant laquelle le nouvel état doit être constaté avant de changer.
+static constexpr uint32_t DOOR_CONFIRM_MS = 1000;
 // Marqueur de validité de la calibration de la protection en flash.
 static constexpr uint32_t COVER_MAGIC = 0xB10B5E01;
 // Délai entre deux tentatives d'initialisation.
@@ -94,7 +97,7 @@ void BlobSenseComponent::setup() {
     if (this->door_pref_.load(&pref) && pref.magic == DOOR_MAGIC && pref.edge < 4) {
       this->door_learned_ = true;
       this->door_edge_ = pref.edge;
-      this->door_ref_mm_ = pref.ref_mm;
+      memcpy(this->door_ref_mm_, pref.ref_mm, sizeof(this->door_ref_mm_));
       this->door_mask_ = pref.mask;
     }
   }
@@ -161,8 +164,9 @@ void BlobSenseComponent::dump_config() {
   LOG_SENSOR("  ", "Zones valides", this->valid_zones_sensor_);
   LOG_BINARY_SENSOR("  ", "Porte", this->door_binary_sensor_);
   if (this->door_learned_) {
-    ESP_LOGCONFIG(TAG, "  Porte apprise : bord %s, référence %u mm, %u zones masquées", DOOR_EDGE_NAMES[this->door_edge_],
-                  this->door_ref_mm_, (unsigned) __builtin_popcountll(this->door_mask_));
+    ESP_LOGCONFIG(TAG, "  Porte apprise : bord %s, références %u / %u / %u / %u mm, %u zones masquées",
+                  DOOR_EDGE_NAMES[this->door_edge_], this->door_ref_mm_[0], this->door_ref_mm_[1], this->door_ref_mm_[2],
+                  this->door_ref_mm_[3], (unsigned) __builtin_popcountll(this->door_mask_));
   } else {
     ESP_LOGCONFIG(TAG, "  Porte : non apprise");
   }
@@ -905,14 +909,14 @@ void BlobSenseComponent::finish_door_learning_() {
   for (uint8_t z = 0; z < ZONES; z++)
     mean[z] = this->door_count_[z] > 0 ? static_cast<float>(this->door_sum_[z]) / this->door_count_[z] : 0;
 
-  // Le bord de la porte est celui dont les 2 zones centrales sont le plus en
-  // avant du fond.
+  // Le bord de la porte est celui dont les 4 zones centrales sont le plus en
+  // avant du fond (en moyenne).
   int8_t best = -1;
-  float best_delta = 0, best_ref = 0;
+  float best_delta = 0;
   for (uint8_t e = 0; e < 4; e++) {
     float sum_d = 0, sum_bg = 0;
     bool ok = true;
-    for (uint8_t k = 0; k < 2; k++) {
+    for (uint8_t k = 0; k < 4; k++) {
       const uint8_t z = DOOR_EDGE_ZONES[e][k];
       if (mean[z] <= 0 || this->background_mm_[z] == 0) {
         ok = false;
@@ -922,15 +926,14 @@ void BlobSenseComponent::finish_door_learning_() {
       sum_bg += this->background_mm_[z];
     }
     if (!ok) {
-      ESP_LOGD(TAG, "  Bord %s : mesure ou fond indisponible", DOOR_EDGE_NAMES[e]);
+      ESP_LOGI(TAG, "  Bord %s : mesure ou fond indisponible sur une des 4 zones", DOOR_EDGE_NAMES[e]);
       continue;
     }
-    const float delta = (sum_bg - sum_d) / 2;
-    ESP_LOGI(TAG, "  Bord %s : %.0f mm, fond %.0f mm, écart %.0f mm", DOOR_EDGE_NAMES[e], sum_d / 2, sum_bg / 2, delta);
+    const float delta = (sum_bg - sum_d) / 4;
+    ESP_LOGI(TAG, "  Bord %s : %.0f mm, fond %.0f mm, écart %.0f mm", DOOR_EDGE_NAMES[e], sum_d / 4, sum_bg / 4, delta);
     if (delta > best_delta) {
       best_delta = delta;
       best = e;
-      best_ref = sum_d / 2;
     }
   }
   if (best < 0 || best_delta < DOOR_MIN_DELTA_MM) {
@@ -950,15 +953,22 @@ void BlobSenseComponent::finish_door_learning_() {
 
   this->door_learned_ = true;
   this->door_edge_ = best;
-  this->door_ref_mm_ = static_cast<uint16_t>(lroundf(best_ref));
+  for (uint8_t k = 0; k < 4; k++)
+    this->door_ref_mm_[k] = static_cast<uint16_t>(lroundf(mean[DOOR_EDGE_ZONES[best][k]]));
   this->door_mask_ = mask;
-  DoorPref pref{DOOR_MAGIC, this->door_edge_, this->door_ref_mm_, this->door_mask_};
+  DoorPref pref{};
+  pref.magic = DOOR_MAGIC;
+  pref.edge = this->door_edge_;
+  memcpy(pref.ref_mm, this->door_ref_mm_, sizeof(pref.ref_mm));
+  pref.mask = this->door_mask_;
   this->door_pref_.save(&pref);
   global_preferences->sync();
-  ESP_LOGI(TAG, "Porte apprise : bord %s, distance de référence %u mm, %u zones masquées quand elle est fermée",
-           DOOR_EDGE_NAMES[best], this->door_ref_mm_, (unsigned) __builtin_popcountll(mask));
+  ESP_LOGI(TAG,
+           "Porte apprise : bord %s, références %u / %u / %u / %u mm, %u zones masquées quand elle est fermée",
+           DOOR_EDGE_NAMES[best], this->door_ref_mm_[0], this->door_ref_mm_[1], this->door_ref_mm_[2],
+           this->door_ref_mm_[3], (unsigned) __builtin_popcountll(mask));
   this->door_closed_ = true;
-  this->door_streak_ = 0;
+  this->door_change_pending_ = false;
   this->reset_tracking_();
   this->publish_door_();
 }
@@ -974,8 +984,10 @@ void BlobSenseComponent::clear_door() {
   this->publish_door_();
 }
 
-// Porte fermée si la moyenne des 2 zones centrales de son bord reste proche
-// de la distance apprise, avec un anti-rebond de quelques images.
+// Porte fermée si au moins 3 des 4 zones centrales de son bord mesurent
+// chacune leur distance apprise (à ± 8 cm). Un objet devrait imiter le battant
+// sur 3 zones voisines à la fois pour tromper la détection, ce qu'une tête ne
+// fait pas. Le nouvel état doit être constaté pendant 1 s avant d'être publié.
 void BlobSenseComponent::update_door_(uint32_t now) {
   if (this->door_learning_) {
     for (uint8_t z = 0; z < ZONES; z++) {
@@ -991,22 +1003,27 @@ void BlobSenseComponent::update_door_(uint32_t now) {
   if (!this->door_learned_)
     return;
 
-  const uint8_t z1 = DOOR_EDGE_ZONES[this->door_edge_][0], z2 = DOOR_EDGE_ZONES[this->door_edge_][1];
-  if (!bit_test(this->valid_mask_, z1) && !bit_test(this->valid_mask_, z2))
-    return;  // pas de mesure : on garde l'état actuel
-  float sum = 0;
-  uint8_t n = 0;
-  for (uint8_t z : {z1, z2}) {
-    if (bit_test(this->valid_mask_, z)) {
-      sum += this->distance_mm_[z];
-      n++;
-    }
+  uint8_t valid = 0, matching = 0;
+  for (uint8_t k = 0; k < 4; k++) {
+    const uint8_t z = DOOR_EDGE_ZONES[this->door_edge_][k];
+    if (!bit_test(this->valid_mask_, z))
+      continue;
+    valid++;
+    if (abs(static_cast<int32_t>(this->distance_mm_[z]) - this->door_ref_mm_[k]) <= DOOR_TOLERANCE_MM)
+      matching++;
   }
-  const bool looks_closed = fabsf(sum / n - this->door_ref_mm_) <= DOOR_TOLERANCE_MM;
+  // Trop peu de mesures pour conclure « ouverte » : on ne change rien.
+  if (matching < DOOR_MIN_MATCHING && valid < DOOR_MIN_MATCHING)
+    return;
+  const bool looks_closed = matching >= DOOR_MIN_MATCHING;
+
   if (looks_closed == this->door_closed_) {
-    this->door_streak_ = 0;
-  } else if (++this->door_streak_ >= DOOR_DEBOUNCE_FRAMES) {
-    this->door_streak_ = 0;
+    this->door_change_pending_ = false;
+  } else if (!this->door_change_pending_) {
+    this->door_change_pending_ = true;
+    this->door_change_since_ms_ = now;
+  } else if (now - this->door_change_since_ms_ >= DOOR_CONFIRM_MS) {
+    this->door_change_pending_ = false;
     this->door_closed_ = looks_closed;
     ESP_LOGI(TAG, "Porte %s", looks_closed ? "fermée" : "ouverte");
     // Le battant a bougé : les pistes en cours ne sont plus fiables.

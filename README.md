@@ -458,17 +458,20 @@ serait aveugle aux personnes pendant plusieurs minutes.
 BlobSense peut **détecter lui-même la porte**, sans capteur supplémentaire :
 
 1. **Apprentissage** : porte **fermée**, passage vide, appuyer sur
-   **Apprendre porte fermée**. Pendant 2 s, le composant mesure les 2 zones
+   **Apprendre porte fermée**. Pendant 2 s, le composant mesure les 4 zones
    centrales de chaque bord de la matrice (ligne 0, ligne 7, colonne 0,
-   colonne 7), soit 8 zones. Il les compare à la carte de fond : le bord
-   nettement plus proche que le fond (de plus de 20 cm) est celui de la
-   porte, et la moyenne de ses 2 zones devient la **distance de référence**.
+   colonne 7), soit 16 zones. Il les compare à la carte de fond : le bord
+   nettement plus proche que le fond (de plus de 20 cm en moyenne) est celui
+   de la porte, et la distance de chacune de ses 4 zones devient une
+   **distance de référence**.
    Il note aussi toutes les zones qui voient le battant. Le résultat est
    sauvegardé en flash (une écriture par apprentissage) et le détail est
    écrit dans les logs.
-2. **Détection** : la porte est **fermée** tant que la moyenne des 2 zones de
-   son bord reste à ± 8 cm de la référence, avec un anti-rebond d'environ
-   0,5 s. Le capteur **Porte** publie l'état (`on` = ouverte).
+2. **Détection** : la porte est **fermée** quand au moins **3 des 4 zones**
+   de son bord mesurent chacune leur distance de référence, à ± 8 cm près.
+   Un changement d'état n'est publié qu'après avoir été constaté pendant
+   **1 s** sans interruption. Le capteur **Porte** publie l'état (`on` =
+   ouverte).
 3. **Quand la porte est fermée**, les zones qui voient le battant sont
    **ignorées** pour la détection, et elles n'alimentent plus la carte de
    fond ni l'historique des distances. Le battant n'est donc jamais pris
@@ -481,10 +484,10 @@ la porte doit avoir été **ouverte dans les dernières minutes** (la fenêtre d
 fond). Sinon, le fond a déjà intégré le battant et aucun bord ne ressort. Si
 l'apprentissage échoue, les logs donnent l'écart mesuré pour chaque bord.
 
-Limite : une tête très haute placée exactement sous le bord de la porte,
-porte ouverte, pourrait être confondue avec le battant fermé. Le cas est peu
-probable, car le haut du battant est en général bien plus près du capteur
-qu'une tête. L'anti-rebond limite aussi ce risque.
+Pour être prise pour le battant fermé, porte ouverte, une tête devrait
+couvrir au moins 3 des 4 zones du bord, chacune à la bonne distance, pendant
+1 s. À cette distance du capteur, une tête n'en couvre qu'une ou deux : le
+risque est très faible.
 
 ### Protection (verre ou « lunettes »)
 

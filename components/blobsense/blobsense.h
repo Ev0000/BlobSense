@@ -279,16 +279,17 @@ class BlobSenseComponent : public Component, public i2c::I2CDevice {
   struct DoorPref {
     uint32_t magic;
     uint8_t edge;       // bord de la porte : 0 = ligne 0, 1 = ligne 7, 2 = colonne 0, 3 = colonne 7
-    uint16_t ref_mm;    // distance moyenne des 2 zones centrales de ce bord, porte fermée
+    uint16_t ref_mm[4]; // distance de chacune des 4 zones centrales de ce bord, porte fermée
     uint64_t mask;      // zones qui voient le battant, porte fermée
   };
   bool door_learned_{false};
   uint8_t door_edge_{0};
-  uint16_t door_ref_mm_{0};
+  uint16_t door_ref_mm_[4]{};
   uint64_t door_mask_{0};
   bool door_closed_{false};
   bool door_published_{false};
-  uint8_t door_streak_{0};
+  uint32_t door_change_since_ms_{0};  // début de la discordance entre état mesuré et état publié
+  bool door_change_pending_{false};
   bool door_learning_{false};
   uint32_t door_learning_end_ms_{0};
   uint32_t door_sum_[ZONES]{};
